@@ -1,0 +1,432 @@
+Module | Sub-Module | Feature | Detailed Description | Business Rules & Validation | Content | Assumptions / Scope Gap | Functional Queries | Technical Queries | Phase | Admin Handling | Comments |  |  | 
+
+City Page | Hero Block | Hero Image | - Display a city-level hero image at the top of the decision stack.
+ - Represent the city atmosphere, skyline or an iconic view. | - Ownership: AI + Human (lockable).
+ - Source: CMS media for the city; optimised via Cloudinary (WebP, CDN, lazy-load).
+ - Display only published / approved hero media; hero preloaded. | - Hero Image
+ -- City-level atmosphere / skyline / iconic view.
+ - Recommended spec (not in Scope)
+ -- WebP / AVIF via Cloudinary; 16:9 hero crop; lazy-load non-hero assets. | - Exact hero dimensions / format not specified in Scope — recommended spec by Appinventiv (basis: Scope 3 media + Cloudinary). | - NA | - NA | Phase-1 | - Content Source – CMS media (Cloudinary)
+ - Editable – Yes (editable / lockable)
+ - Language Specific – No
+ - CMS Field / Token – City hero media (not explicitly named in Scope) | – |  |  | 
+
+City Page | Hero Block | H1 | - Display the City Page H1 within the hero.
+ - Format: “Visit {{City_Name}} – Your starting point for [type of travel]”. | - Exactly one H1 per page.
+ - AI-generated from City_Name + Country_Name + dominant city type; human can edit / lock.
+ - Display the published language version only. | - H1 format
+ -- “Visit {{City_Name}} – Your starting point for [type of travel]” | - NA | - NA | - NA | Phase-1 | - Content Source – CMS (AI + manual)
+ - Editable – Yes (editable / lockable)
+ - Language Specific – Yes
+ - CMS Field / Token – City H1 (not explicitly named in Scope) | – |  |  | 
+
+City Page | Hero Block | Dynamic Snippet (DEE) | - Display a dynamic snippet below the H1 (not SEO body).
+ - High-density description of why the city is worth visiting (culture, highlights, vibe). | - 180–260 characters.
+ - Selected by DEE from a prewritten variant set (no realtime generation); DEE serves a non-default variant only when inferred audience confidence ≥ 0.65, else the default.
+ - Snippet is UX-only — not used as SEO body / meta description. | - Snippet variants (prewritten; /cms/city/snippets/)
+ -- city_snippet_default (fallback)
+ -- city_snippet_first_time_visitor (Model C baseline)
+ -- city_snippet_family_planner
+ -- city_snippet_comfort_easy_pace_traveler
+ -- city_snippet_solo_social_traveler
+ -- city_snippet_interest_deep_dive_traveler
+ -- city_snippet_active_adventure_traveler | - NA | - NA | - NA | Phase-1 | - Content Source – CMS (AI + manual)
+ - Editable – Yes
+ - Language Specific – Yes
+ - CMS Field / Token – city_snippet_* | /cms/city/snippets/ | – |  |  | 
+
+City Page | Hero Block | Quick Facts Strip (optional) | - Optionally display a factual quick-facts strip.
+ - Country / region, best months (range), typical trip length (e.g., “Best for 2–4 days”). | - Stored as factual city metadata (from the enrichment layer).
+ - Optional block; display only when data exists. | - Quick Facts
+ -- Country / region
+ -- Best months (range)
+ -- Typical trip length (e.g., “Best for 2–4 days”) | - NA | - NA | - NA | Phase-1 | - Content Source – System (factual city metadata)
+ - Editable – No (enrichment)
+ - Language Specific – Yes (labels)
+ - CMS Field / Token – City metadata (quick facts) | – |  |  | 
+
+City Page | Hero Block | Social Share Bar | - Display a social-share bar in the hero.
+ - Share to WhatsApp, Email, Copy link (platform list configurable). | - Configured via /cms/social-sharing.
+ - Share URLs must preserve canonical tracking (UTM templates) without creating indexable URL variants. | - Share targets
+ -- WhatsApp
+ -- Email
+ -- Copy link
+ -- (platform list configurable) | - NA | - NA | - NA | Phase-1 | - Content Source – CMS (/cms/social-sharing)
+ - Editable – Yes (platform list + UTM)
+ - Language Specific – No
+ - CMS Field / Token – /cms/social-sharing | – |  |  | 
+
+City Page | Decision-First Stack | “Top Picks for You” Micro-Carousel (optional) | - Optionally display a short personalized “spark” micro-carousel before Bundles.
+ - 4–8 cards (carousel on desktop; 2×2 grid on mobile). | - Ownership: DEE + precomputed selection outputs.
+ - Cards may include products, bundles, things-to-do entry, top attraction tour.
+ - Must be selected from precomputed allowed outputs only (DEE does not invent items).
+ - Optional — may be removed without affecting Model C. | - Micro-Carousel
+ -- 4–8 cards (desktop carousel / mobile 2×2)
+ -- Mixed: products / bundles / things-to-do / attraction tour | - NA | - NA | - NA | Phase-1 | - Content Source – System (DEE precomputed)
+ - Editable – Selection config
+ - Language Specific – Yes
+ - CMS Field / Token – Precomputed DEE outputs | – |  |  | 
+
+City Page | Decision-First Stack | Bundles (1/2/3-day) — Exactly 3 | - Display exactly 3 duration-based bundle cards: 1-day, 2-day, 3-day.
+ - Each card: title + subtitle, hero thumbnail, 3 bullet highlights, optional Trip DNA micro-strip, CTA “Preview itinerary”.
+ - On click, open a modal preview (no URL change) with “Why these picks”, Anchor/Complement/Flex summary, and CTA “Check availability & adjust times”. | - HARD: always exactly 3 cards (1/2/3-day); no explosion into per-segment bundles.
+ - If a DEE profile and profile-aware bundles exist → show those; else default.
+ - Bundle feasibility enforced (Time Geometry + Difficulty + timed caps; configured in Product Ops).
+ - Modal must not create indexable URLs; each bundle must have a published bundle page.
+ - Final CTA routes to /{lang}/{country}/{city}/itineraries/{segment-}{duration}-day/. | - Card content
+ -- Title + subtitle
+ -- Hero thumbnail
+ -- 3 bullet highlights
+ -- Trip DNA micro-strip (optional)
+ -- CTA: “Preview itinerary”
+ - Modal
+ -- “Why these picks” + Anchor/Complement/Flex + CTA “Check availability & adjust times” | - NA | - NA | - NA | Phase-2 | - Content Source – System (Bundle builder + DEE)
+ - Editable – Selection / Product Ops
+ - Language Specific – Yes
+ - CMS Field / Token – Bundle variants (precomputed) | – |  |  | 
+
+City Page | Decision-First Stack | Top Picks (Hero Picks) — Exactly 6 | - Display exactly 6 curated product cards (safest default winners across archetypes).
+ - Each card: image, title, snippet ≤120 chars, rating, review count, runtime price, CTA “View”. | - HARD: exactly 6 cards; must be Set-eligible (INSTANT only).
+ - Anti-duplicates: R1 (no product twice on the page); R2 (avoid repeating the same attraction product across Top Picks).
+ - DEE may reorder within Set outputs by profile; DEE must not introduce products outside Set outputs.
+ - Route only to published canonical Product pages. | - Card fields
+ -- Image
+ -- Title
+ -- Snippet ≤120 chars
+ -- Rating
+ -- Review count
+ -- Runtime price
+ -- CTA “View” | - NA | - NA | - NA | Phase-1 | - Content Source – System (Model C Set output + DEE)
+ - Editable – Selection (DEE order)
+ - Language Specific – Yes
+ - CMS Field / Token – Set outputs (INSTANT) | – |  |  | 
+
+City Page | Decision-First Stack | Private Upgrade (CTA-only) — Max 2 | - Display the Private Upgrade block after Top Picks as an upgrade path (not a catalog).
+ - Max 2 CTAs: “Upgrade to Private” and “See all private tours”. | - HARD: no product lists; max 2 CTAs.
+ - “See all private tours” opens the Phase B overlay filtered to private (no indexable URLs; canonical remains the City Page). | - CTAs
+ -- “Upgrade to Private”
+ -- “See all private tours” → Phase B overlay (private filter) | - NA | - NA | - NA | Phase-1 | - Content Source – CMS
+ - Editable – Yes (labels)
+ - Language Specific – Yes
+ - CMS Field / Token – Not specified in Scope | – |  |  | 
+
+City Page | Decision-First Stack | Category Rails (Decision Rails) — Max 4 × 2 | - Display up to 4 decision rails, each showing up to 2 winners (Best Value + Premium) plus a CTA “Choose by intent”.
+ - A rail is a RosoTravel decision category (not a provider category). | - HARD: max 4 rails; each rail max 2 products, shown only if materially different (R6 “2-of-many must be real”) — else 1 pick + CTA.
+ - Rails must not repeat products used in Top Picks (R3); select the next eligible product.
+ - Set-eligible (INSTANT) inventory only.
+ - Internal value tiers: best_value_for_money, balanced_core, premium, niche. “Best Value” slot prefers best_value_for_money (fallback balanced_core); “Premium” slot prefers premium (fallback balanced_core); niche excluded from the two slots (Phase B / long-tail) unless it is the only eligible option.
+ - Ticket-first rails (e.g., Museum & Culture) prefer ticket / pass; guided tours only as premium upgrade and must not contaminate ticket-only surfaces. | - Rail outputs (2 visible slots)
+ -- Best Value
+ -- Premium
+ -- CTA: “Choose by intent”
+ - Example rails (Iconic/Culture)
+ -- City Highlights / Orientation
+ -- Top Attraction Tour
+ -- Museum & Culture (Ticket-first)
+ -- Food & Tastings | - NA | - NA | - NA | Phase-1 | - Content Source – System (Model C tiers + DEE)
+ - Editable – Selection config
+ - Language Specific – Yes
+ - CMS Field / Token – Value-tier config (Product Ops) | – |  |  | 
+
+City Page | Decision-First Stack | Inline Trip Planner Teaser (after Rails) | - Display a compact one-line teaser + button after the Rails (safety net for undecided users).
+ - Text: “Not sure what fits your trip? Get a 1–3 day plan by email.” Button: “Plan my trip”.
+ - On click, open the Trip Planner modal or scroll to the full Trip Planner section. | - HARD: single line + button; must not expand City Page height significantly.
+ - Not a substitute for the full Trip Planner form — both must coexist on the page.
+ - Copy is CMS-editable via tokens. | - Teaser
+ -- Text: “Not sure what fits your trip? Get a 1–3 day plan by email.”
+ -- Button: “Plan my trip” | - NA | - NA | - NA | Phase-1 | - Content Source – CMS
+ - Editable – Yes (copy)
+ - Language Specific – Yes
+ - CMS Field / Token – TOKEN_TRIP_PLANNER_TEASER_1L ; TOKEN_TRIP_PLANNER_CTA | – |  |  | 
+
+City Page | Decision-First Stack | Top Attraction Tours in {{City}} — 3–6 | - Display 3–6 curated tours tied to the city’s top attractions (without duplicating Top Picks or Rails). | - HARD: 3–6 cards; must be Set-eligible (INSTANT).
+ - Anti-duplicate R1 (do not repeat products shown above); prefer one representative product per attraction.
+ - Do not force-fill with weak products if insufficient eligible options exist.
+ - v1 top-attraction ranking: attraction feed aggregates (review_count + average_rating) + a “tour suitability” filter (attraction must have Set-eligible products in relevant rails); pick 1 best representative product per attraction via Model C. | - Card fields (recommended — same as Product card)
+ -- Image
+ -- Title
+ -- Snippet ≤120 chars
+ -- Rating / review count
+ -- Price
+ -- CTA “View” | - The definitive “top attraction” model is explicitly TBD in Scope (v1 heuristic given) — flagged as a discovery item. | - NA | - NA | Phase-1 | - Content Source – System (Model C selection)
+ - Editable – Selection config
+ - Language Specific – Yes
+ - CMS Field / Token – Attraction feed + Set outputs | – |  |  | 
+
+City Page | Decision-First Stack | Mini “Explore by Category” Chips — Max 8 | - Display up to 8 compact category chips (quick internal links; no descriptions).
+ - Chips link to /{lang}/{country}/{city}/{category-slug}/. | - HARD: max 8 chips; no descriptions.
+ - Route to canonical published category pages only — no parameterised URLs.
+ - DEE may reorder chips by profile but must not change destinations.
+ - Separate from the full “Things to do categories” block in the content zone. | - Chips
+ -- Max 8; label-only
+ -- → /{lang}/{country}/{city}/{category-slug}/ | - NA | - NA | - NA | Phase-1 | - Content Source – System (taxonomy) + DEE
+ - Editable – Taxonomy config
+ - Language Specific – Yes (labels)
+ - CMS Field / Token – Category chips config | – |  |  | 
+
+City Page | Decision-First Stack | Top Tickets in {{City}} — 4–6 | - Display 4–6 ticket-only / city pass / city card items (clean ticket surface; no guided tours). | - HARD: exactly 4–6 items; accept only products classified TICKET or CITY_PASS_CITY_CARD.
+ - Guided tours must never appear here.
+ - Anti-duplicate R1 (do not repeat products shown above); Set-eligible (INSTANT). | - Card fields (recommended — ticket style)
+ -- Image
+ -- Ticket / pass name
+ -- Price
+ -- Rating / review count
+ -- CTA “View” | - NA | - NA | - NA | Phase-1 | - Content Source – System (Set output)
+ - Editable – Selection config
+ - Language Specific – Yes
+ - CMS Field / Token – Ticket / city-pass inventory (INSTANT) | – |  |  | 
+
+City Page | Phase B — More Options | Phase B Entry (“Show more options”) | - Display the “Show more options” entry at the end of the decision-first stack.
+ - Opens the Phase B overlay (desktop) / full-screen overlay (mobile). | - Does not create indexable URLs; canonical remains the City Page URL.
+ - Controlled exploration only after explicit user intent. | - Entry
+ -- CTA: “Show more options” → Phase B overlay | - NA | - NA | - NA | Phase-2 | - Content Source – CMS
+ - Editable – Yes (label)
+ - Language Specific – Yes
+ - CMS Field / Token – Not specified in Scope | – |  |  | 
+
+City Page | Phase B — More Options | B2C Public Phase B Overlay | - Display the public Phase B overlay with two tabs: Magic Finder (Topic/POI) and Browse Curated Catalog. | - Quality floors — Standard: rating ≥ 4.5; On-your-request: Tours ≥ 4.2, Tickets ≥ 3.9.
+ - Clear separation of curated “standard” picks vs “on-your-request” options (zero mixing; explicit framing copy).
+ - POI PACK must be one-screen compact (no vertical scroll by design).
+ - No indexable URLs; no AI/SEO batch triggers, no keyword retrieval, no near-page creation from the overlay. | - Tabs
+ -- Magic Finder (Topic / POI)
+ -- Browse Curated Catalog
+ - Floors
+ -- Standard ≥ 4.5 ; On-request Tours ≥ 4.2 / Tickets ≥ 3.9 | - NA | - NA | - NA | Phase-2 | - Content Source – System (curated outputs)
+ - Editable – Config (floors)
+ - Language Specific – Yes
+ - CMS Field / Token – Set / curated inventory | – |  |  | 
+
+City Page | Phase B — More Options | Travel Agent B2B Phase B Variant | - Display a role-gated B2B Phase B overlay only when the user is authenticated as a Travel Agent.
+ - Show agent discounts prominently and a premium-first order. | - Strictly role-gated — never shown to B2C / unauthenticated users.
+ - Discounts: RosoTravel Originals X% / Partner options Y% — pulled from Partners Admin global settings (not hardcoded).
+ - Premium-first order: 3 curated packages → Originals (group then private, highlighted) → curated partner options.
+ - Expanded catalog limits by inventory band: 0–299 → up to 150; 300–599 → up to 250; 600+ → up to 400.
+ - On-your-request access with warning (Tours ≥ 4.2, Tickets ≥ 3.9).
+ - No indexable URLs; no SEO/AI batch triggers from B2B views. | - B2B order
+ -- 3 curated packages
+ -- Originals (group → private, highlighted)
+ -- Curated partner options (categorized)
+ - Catalog bands
+ -- 0–299:150 · 300–599:250 · 600+:400 | - NA | - NA | - NA | Phase-2 | - Content Source – System (role-gated) + Partners Admin
+ - Editable – Discounts via Partners Admin
+ - Language Specific – Yes
+ - CMS Field / Token – Partner discount config (Partners Admin) | – |  |  | 
+
+City Page | Trust Bridge — Live Snapshot | “This week in {{City}}” (Live Snapshot) | - Display an operational proof snapshot immediately after the Phase B entry.
+ - Elements: tours run (7d), travelers hosted (7d), average rating (7d), top guides this week (optional), “Guests loved this week” (2–3 bullets), optional “Live from last tours” photo strip (4–8 photos). | - Ownership: factual metrics + AI summarization (summary precomputed nightly).
+ - City-scoped computation; same data-source rules as the Homepage Live block.
+ - Guide photos from guide profiles only; photo strip from verified recent tour media.
+ - Fallback: if low volume, use last 30 days and label “Last month in {{City}}”; if data unavailable, show safe fallback — never show zeros. | - Metrics (rolling 7 days)
+ -- Tours run
+ -- Travelers hosted
+ -- Average rating
+ -- Top guides (optional)
+ -- “Guests loved this week” (2–3 bullets)
+ -- “Live from last tours” photo strip (4–8; optional) | - NA | - NA | - NA | Phase-1 | - Content Source – System (factual) + AI summary
+ - Editable – Labels (tokens)
+ - Language Specific – Yes (labels)
+ - CMS Field / Token – TOKEN_LIVE_SNAPSHOT_TITLE_CITY ; TOKEN_LIVE_SNAPSHOT_FALLBACK | – |  |  | 
+
+City Page | City-Level Reviews | Aggregated Reviews (compact) | - Display aggregated city reviews: city average rating, “Based on X verified reviews”, and 3–6 sample review cards. | - Ownership: aggregated (verified reviews only, mapped to products in the city).
+ - Sample cards selected by recency + helpfulness weighting.
+ - Review aggregation scoped to city. | - Aggregate
+ -- City average rating
+ -- “Based on X verified reviews”
+ - Sample Review Card (3–6)
+ -- Photo, name, stars, date, product link. | - NA | - NA | - NA | Phase-1 | - Content Source – System (aggregated)
+ - Editable – No (computed)
+ - Language Specific – Yes
+ - CMS Field / Token – Not specified in Scope | – |  |  | 
+
+City Page | Local Content (SEO Zone) | Local Tips | - Display 3–5 short local tips (160–260 chars) covering transport, safety, seasonality, etiquette, money. | - Stable, AI-generated, human-editable.
+ - Display published language version only. | - Local Tips
+ -- 3–5 tips, 160–260 chars each
+ -- Topics: transport, safety, seasonality, etiquette, money | - NA | - NA | - NA | Phase-1 | - Content Source – CMS (AI + manual)
+ - Editable – Yes
+ - Language Specific – Yes
+ - CMS Field / Token – Not specified in Scope | – |  |  | 
+
+City Page | Local Content (SEO Zone) | Best Neighborhoods | - Display 3–8 neighborhood tiles. | - Neighborhood entities must exist in the DB — AI cannot invent new neighborhoods.
+ - Link only to published neighborhood surfaces where applicable. | - Neighborhood Tile (3–8)
+ - Tile fields (recommended)
+ -- Image
+ -- Neighborhood name
+ -- Short descriptor / link | - Tile fields not defined in Scope — recommended by Appinventiv (consistent with the destination-tile pattern). | - NA | - NA | Phase-1 | - Content Source – System (DB entities) + CMS
+ - Editable – Yes (copy)
+ - Language Specific – Yes
+ - CMS Field / Token – Neighborhood entities (DB) | – |  |  | 
+
+City Page | Local Content (SEO Zone) | Things to Do Categories (full block) | - Display the full category grid/chips block (beyond the mini chips in the decision stack).
+ - Links go to city category pages. | - DEE may reorder categories; links route to canonical city category pages only.
+ - Display published categories only. | - Categories (full grid)
+ -- Taxonomy-driven; → /{lang}/{country}/{city}/{category-slug}/ | - NA | - NA | - NA | Phase-1 | - Content Source – Taxonomy (System) + DEE
+ - Editable – Taxonomy config
+ - Language Specific – Yes (labels)
+ - CMS Field / Token – City category taxonomy | – |  |  | 
+
+City Page | Blog & Guides | Article List | - Display a list/carousel of city-tagged blog / travel-guide articles.
+ - Support pinning an evergreen hero guide. | - Show published articles tagged to the city only; newest first with pinned evergreen support.
+ - Recommended: 4–6 cards. | - Card Fields (recommended)
+ -- Image
+ -- Title
+ -- Teaser
+ -- Reading time
+ - Articles
+ -- City-tagged; pin evergreen hero guide (recommend 4–6 cards). | - Blog card fields / count not defined in Scope for the City Page — recommended by Appinventiv, consistent with the Homepage Blog Highlights pattern (Scope 2 §2.0.10). | - NA | - NA | Phase-1 | - Content Source – CMS (Editorial)
+ - Editable – Yes
+ - Language Specific – Yes
+ - CMS Field / Token – Not specified in Scope | – |  |  | 
+
+City Page | About Rosotravel in {{City}} | Section Wrapper | - Display the “About Rosotravel in {{City_Name}}” brand-expertise section (alt labels allowed).
+ - Explains the decision-first city role and why the page shows a curated shortlist. | - Generated during the city-level “Run AI Batch Processing”; part of city content versioning.
+ - Ownership: AI-generated first draft; Human editable; Lockable in CMS (locked ⇒ not overwritten unless re-enabled).
+ - Purpose: LLM brand grounding + city-level expertise trust + decision-platform logic. | - Canonical Label
+ -- “About Rosotravel in {{City_Name}}”
+ - Placement
+ -- SEO content zone (with City Reputation Strip at the top of the section). | - NA | - NA | - NA | Phase-1 | - Content Source – CMS (AI + manual)
+ - Editable – Yes (lockable)
+ - Language Specific – Yes
+ - Version Controlled – Yes
+ - CMS Field / Token – city_brand_expertise_enabled / _title / _short_intro / _lock / _version / _generated_at | – |  |  | 
+
+City Page | About Rosotravel in {{City}} | City Reputation Strip (B1) | - Display a compact trust strip at the top of the About section.
+ - Elements: city rating line, review-count line, “What travelers value most in {{City_Name}}” (2–4 bullets), optional link to reviews. | - Rating from verified reviews only, products mapped to the city, via review-aggregation jobs (not AI estimation).
+ - city_brand_rating_value = weighted average across verified reviews linked to products mapped to the city; city_brand_rating_count = number of verified reviews; refresh nightly.
+ - Visibility threshold: show the numeric strip only if city_brand_rating_count >= 20 verified reviews; else hide the score (optionally keep themes) or hide the strip.
+ - “What travelers value most” from clustered verified review themes (2–4 bullets; destination-specific; real evidence only). | - Rating line
+ -- “Rosotravel is rated 4.8/5 by travelers across tours in {{City_Name}}.”
+ - Review-count line
+ -- “Based on 436 verified reviews linked to experiences in {{City_Name}}.”
+ - What travelers value most (2–4)
+ -- e.g. guide storytelling, smooth organization, clear meeting instructions. | - Threshold (≥20 reviews) and fallback are defined in Scope — applied as stated (note: city threshold 20 vs country 50). | - NA | - NA | Phase-1 | - Content Source – System (aggregated)
+ - Editable – Enable / Disable
+ - Language Specific – Yes (themes)
+ - CMS Field / Token – city_brand_rating_enabled / _value / _count / _updated_at ; city_brand_top_review_themes[] | – |  |  | 
+
+City Page | About Rosotravel in {{City}} | Reputation Schema (AggregateRating) | - Attach machine-readable aggregate rating data referencing the same visible city rating value.
+ - Keep schema synchronized with the visible block. | - Expose fields: ratingValue, reviewCount, bestRating = 5, worstRating = 1.
+ - Do not implement schema-only stars without the visible page strip; do not show a rating if evidence is too weak.
+ - Aggregate based on verified reviews of products mapped to this city page. | - Schema fields
+ -- ratingValue
+ -- reviewCount
+ -- bestRating = 5
+ -- worstRating = 1 | - NA | - NA | - NA | Phase-1 | - Content Source – System (generated)
+ - Editable – No
+ - Language Specific – NA
+ - CMS Field / Token – city_brand_rating_schema_enabled | – |  |  | 
+
+City Page | About Rosotravel in {{City}} | Explanatory Body (B2) | - Display the explanatory body after the reputation strip, as one continuous section with 4 sub-parts:
+ -- Rosotravel’s role in {{City_Name}}.
+ -- How Rosotravel builds its {{City_Name}} offering.
+ -- Why Rosotravel does not show an endless list in {{City_Name}}.
+ -- What travelers gain from using Rosotravel in {{City_Name}}. | - Length 350–700 words; 3–5 paragraphs (optional 3–4 bullets).
+ - Tone: city-specific, expert but natural, local-feeling without false local claims, premium.
+ - MUST be significantly more specific than the Country version (adapt to city type, dominant attractions, bundle structure, own-vs-partner mix, traveler patterns, rating / themes).
+ - MUST NOT claim (unless true): local office / branch / physical point, exact city staff, that RosoTravel directly operates every product, that every guide is guaranteed, unverifiable city leadership. | - 4 sub-parts (see Detailed Description)
+ - Forbidden claims
+ -- “based in / our office in {{City}}” (unless true)
+ -- “we operate all tours in {{City}}” (unless true)
+ -- “biggest tour company in {{City}}” (unless proven & approved) | - NA | - NA | - NA | Phase-1 | - Content Source – CMS (AI + manual)
+ - Editable – Yes (lockable)
+ - Language Specific – Yes
+ - Version Controlled – Yes
+ - CMS Field / Token – city_brand_expertise_body | – |  |  | 
+
+City Page | FAQ (City Level) | FAQ Block — Exactly 9 | - Display the city-level FAQ block with exactly 9 items. | - Ownership: AI-drafted + human review / lock.
+ - Exactly 9 FAQs; recommend ≤350 chars per answer.
+ - FAQ semantic uniqueness check (faq_vectors similarity, F.09.2) to prevent duplicates.
+ - Schema: FAQPage (must match the visible FAQ content exactly). | - FAQ
+ -- Exactly 9 items (city-level, informational)
+ -- Recommended: ≤350 chars per answer. | - Answer length (≤350 chars) not fixed in the template — recommended by Appinventiv (aligned with the Phases Sheet note). | - NA | - NA | Phase-1 | - Content Source – CMS (AI + manual)
+ - Editable – Yes (editable / lockable)
+ - Language Specific – Yes
+ - CMS Field / Token – City FAQ items (not explicitly named in Scope) | – |  |  | 
+
+City Page | City Trip Planner Hook | Full Form (lead capture) | - Display the full City Trip Planner form below the content blocks (complements the inline teaser after Rails).
+ - Collect trip inputs and return AI-curated plans using existing inventory only. | - Form fields: arrival date (optional), number of days (1–7), interests (multi-select), budget level (low/medium/high), email (required), optional traveling-with-children + ages.
+ - HARD: AI may recommend only existing tours, attractions and bundles (no invented products).
+ - Requires GDPR consent; store requests in user_trip_plans. | - Form Fields
+ -- Arrival date (optional)
+ -- Number of days (1–7)
+ -- Interests (multi-select)
+ -- Budget level (low / medium / high)
+ -- Email (required)
+ -- Traveling with children + ages (optional) | - NA | - NA | - NA | Phase-1 | - Content Source – System + CMS
+ - Editable – Yes (copy)
+ - Language Specific – Yes
+ - CMS Field / Token – user_trip_plans | – |  |  | 
+
+City Page | Comments & Ask Our Expert | City Comment Thread | - Display a city-level comment thread plus an “Ask our city expert” form. | - Ownership: user-generated + expert/admin moderated via CMS.
+ - Spam protection required; rate-limited per IP (recommend 3 / hour / IP).
+ - Recommend: user-to-user answering disabled — only RosoTravel experts / admins reply (consistent with the Country page rule). | - Thread
+ -- City comments + “Ask our city expert” form
+ - Widgets (recommended)
+ -- Expert-reply highlight
+ -- “Was this helpful?” (thumbs up / down) | - Moderation model resolved via the Phases Sheet (CMS-moderated; expert/admin replies; spam protection; rate-limited). | - NA | - NA | Phase-1 | - Content Source – CMS (moderated)
+ - Editable – Moderation
+ - Language Specific – Yes
+ - CMS Field / Token – /cms/qa/ | – |  |  | 
+
+City Page | SEO, Schema & Indexing | URL, Canonical & hreflang | - Render the City Page at /{lang}/{country}/{city}/ with a self canonical and standard hreflang alternates. | - Canonical = self; canonical stays the City Page URL even when Phase B / modals open.
+ - hreflang: standard language alternates; SEO state rendered deterministically from backend (frontend must not invent SEO state). | - URL
+ -- /{lang}/{country}/{city}/ (e.g. /en/italy/rome/) | - NA | - NA | - NA | Phase-1 | - Content Source – System (backend SEO state)
+ - Editable – No
+ - Language Specific – Yes
+ - CMS Field / Token – SEO state (deterministic) | – |  |  | 
+
+City Page | SEO, Schema & Indexing | Breadcrumb | - Display breadcrumb: Home > Destinations > {{Country}} > {{Region}} (optional) > {{City}} and emit BreadcrumbList JSON-LD. | - Generated by the generic Breadcrumb Builder walking parent relations (country_id / region_id / city_id); missing parents skipped gracefully.
+ - Current page not clickable; final crumb matches the page H1; canonical URLs only. | - Breadcrumb
+ -- Home > Destinations > {{Country}} > {{Region}} (optional) > {{City}} | - NA | - NA | - NA | Phase-1 | - Content Source – System (generated)
+ - Editable – No
+ - Language Specific – Yes
+ - CMS Field / Token – Generated (BreadcrumbList) | – |  |  | 
+
+City Page | SEO, Schema & Indexing | Structured Data (Schema) | - Emit page schema: TouristDestination (primary), ItemList (Bundles, Top Picks, Rails, Top attraction tours, Top Tickets), FAQPage (city-level). | - ItemList blocks must correspond to the rendered decision-stack lists.
+ - Validate structured data before publishing; keep the AggregateRating (About section) synchronized with the visible strip. | - Schema Types
+ -- TouristDestination (primary)
+ -- ItemList (Bundles, Top Picks, Rails, Top attraction tours, Top Tickets)
+ -- FAQPage (city-level) | - NA | - NA | - NA | Phase-1 | - Content Source – System (generated)
+ - Editable – No
+ - Language Specific – As applicable
+ - CMS Field / Token – Generated schema | – |  |  | 
+
+City Page | SEO, Schema & Indexing | Indexing & DEE URL Safety | - Keep the City Page a single canonical indexable surface; personalization and Phase B must not create indexable variants. | - DEE adapts which precomputed blocks are shown and their ordering without creating indexable segment URLs.
+ - Phase B (B2C + B2B) and all modals create no indexable URLs; canonical remains the City Page URL.
+ - Allowed intent ownership (D.3): Navigational, Informational (Mixed only Info+Nav; excludes Commercial / Transactional). | - Indexing
+ -- Single canonical City Page; no indexable segment / Phase B URLs. | - NA | - NA | - NA | Phase-1 | - Content Source – System (SEO governance)
+ - Editable – No
+ - Language Specific – NA
+ - CMS Field / Token – index_state / canonical | – |  |  | 
+
+City Page | SEO, Schema & Indexing | Generation (Run AI Batch) & Versioning | - Generate city page content, snippets and city-level SEO assets via the city-level “Run AI Batch Processing”, with versioning and lock. | - AI drafts content and schema; content is versioned and editable / lockable in CMS (locked ⇒ not overwritten unless re-enabled).
+ - Keyword pipeline: SEMrush + GSC → OpenAI embeddings → LangChain clusters → assigned to the city entity. | - Generation
+ -- City-level “Run AI Batch Processing” → AI draft → human edit / lock. | - NA | - NA | - NA | Phase-1 | - Content Source – System (AI) + CMS
+ - Editable – Yes (lockable)
+ - Language Specific – Yes
+ - Version Controlled – Yes
+ - CMS Field / Token – Run AI Batch (versioned) | – |  |  | 
+
+City Page | Page-Level Behaviour | Global Header / Footer / Navigation | - Reuse the global Header, Footer and Navigation (already implemented) on the City Page. | - City page uses the global components; this template defines the city content blocks only. | - Global components
+ -- Header + Footer + Breadcrumb (already implemented). | - NA | - NA | - NA | Phase-1 | - Content Source – System (Global Components)
+ - Editable – No
+ - Language Specific – Yes
+ - CMS Field / Token – Global components config | – |  |  | 
+
+City Page | Page-Level Behaviour | DEE Personalization Guardrails | - Constrain DEE across the City Page: choose precomputed snippet / Set variants and reorder within allowed outputs only. | - DEE must NOT create indexable segment URLs or introduce products outside Set outputs.
+ - Deterministic, session-safe, SEO-safe; personalization variants not indexed. | - Guardrails
+ -- Reorder / select precomputed outputs only; not indexed; deterministic. | - NA | - NA | - NA | Phase-1 | - Content Source – System (DEE)
+ - Editable – Config
+ - Language Specific – NA
+ - CMS Field / Token – DEE guardrails | – |  |  | 
+
+City Page | Page-Level Behaviour | Responsive, Performance & Media | - Render mobile-first: same section order stacked; Phase B opens as a full-screen overlay; mini-CTA blocks stay ultra-compact.
+ - Deliver images via Cloudinary (WebP, CDN, lazy-load) with the hero preloaded. | - Core Web Vitals (Scope 3 B.1.2): LCP < 1.5s (City is explicitly listed), CLS < 0.1, INP < 200 ms.
+ - Backend response (no cache): P95 < 400 ms for City HTML.
+ - Images WebP / AVIF, lazy-loaded; reserve layout space to avoid CLS; heavy carousels must not degrade INP. | - Media
+ -- Cloudinary (WebP, CDN, lazy-load); hero preloaded.
+ - Mobile
+ -- Sections stacked; Phase B = full-screen overlay. | - NA | - NA | - NA | Phase-1 | - Content Source – System
+ - Editable – No
+ - Language Specific – NA
+ - CMS Field / Token – Frontend performance / Cloudinary | – |  |  | 
+

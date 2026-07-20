@@ -1,0 +1,123 @@
+Phase 2 doubts / clarifications
+
+- Source priority for factual enrichment is not explicitly defined in the provided docs.
+  Context confirms the sources and their roles: manual override/CMS, official website,
+  Google Places, Wikidata, Reviews API/CMS, and Viator/raw supplier feed. Proposed
+  implementation order is: manual override > official website > Google Places >
+  Wikidata > Viator.
+
+Confirmed Phase 2 test entities:
+
+- Rome
+- Colosseum
+- Vatican Museums
+- Paris
+- Eiffel Tower
+
+Confirmed Google Places behavior:
+
+- If GOOGLE_PLACES_API_KEY exists, use live Google Places.
+- If GOOGLE_PLACES_API_KEY is missing, use deterministic stub mode.
+- No separate live-mode feature flag is required for the POC.
+
+Confirmed manual override scope:
+
+- Add manual override support in the Phase 2 data/API layer.
+- Do not build an admin UI in this POC phase.
+
+Confirmed rating handling:
+
+- Store Google Places rating and review_count as external place facts in EnrichedFact.
+- Keep internal Rosotravel verified review aggregates as a separate future concern.
+- Do not mix Google place ratings with internal AggregateRating schema values.
+
+Factual refresh schedule ambiguity:
+
+- Docs define factual_hash and say factual changes trigger schema refresh, not AI
+  regeneration by default.
+- WBS explicitly defines nightly refresh for review/proof aggregates.
+- Docs do not clearly define the refresh cadence for Google Places/Wikidata facts.
+- POC decision: facts refresh manually when the enrich endpoint is called.
+
+Confirmed official website handling:
+
+- Store official_website in enriched facts when available.
+- Include official_website in factual_hash.
+- Expose official_website via the facts endpoint.
+
+Phase 3 LLM provider clarification:
+
+- Phase 3 plan mentions OPENAI_API_KEY for live GPT output.
+- User provided a Groq API key and asked to try/use a Groq model.
+- Implementation should support Groq via its OpenAI-compatible Chat Completions API.
+- Use stub/template mode when GROQ_API_KEY is not configured.
+
+Phase 4 Model C ambiguities / POC assumptions:
+
+- Docs clearly define RAW > Pool > Set and say Set requires manual confirmation, but the
+  exact production UI/workflow for Product Ops confirmation is not specified. POC should expose
+  an API endpoint to simulate this.
+- Docs define quality floors in several places, but the current POC product fixtures do not have
+  all production fields such as INSTANT confirmation, fulfillment status, cancellation quality,
+  language availability, verified review themes, or supplier reliability. POC quality scoring must
+  use available fields only.
+- Docs require archetype/core-vs-variant grouping and near-duplicate avoidance, but no exact
+  taxonomy file is provided. POC should derive lightweight archetypes from category_group and
+  title keywords.
+- Docs reference product_attraction_relations for POI picks, but the current POC does not yet
+  store product-to-attraction relation records. City-level picks can be implemented now; POI-level
+  picks need relation data later.
+- Docs say DEE may reorder within precomputed Set outputs and must not introduce products outside
+  Set, but the exact audience signal source/confidence model is not provided. POC should return
+  deterministic default ordering only, with structure ready for audience-aware ordering later.
+
+Phase 5 schema/publishing POC assumptions:
+
+- Docs require canonical URLs but do not provide the final production URL builder/base domain for
+  this POC. Use deterministic POC canonicals under https://www.rosotravel.com/en/... and keep the
+  builder centralized for replacement later.
+- Docs require UI-to-schema parity, but this backend POC has no rendered frontend. Treat content
+  included in PublishedRecord.content as the visible UI snapshot, and include FAQ/ItemList/rating
+  schema only when that snapshot contains the matching block/source.
+- Docs require JSON-LD validation against schema.org; POC validation should perform structural and
+  traceability checks locally, not call an external validator.
+
+Phase 6 visibility/MCP POC assumption:
+
+- Docs call this an MCP server, but the phase plan explicitly allows plain REST endpoints first.
+  POC should implement the functional contract under /mcp/* now, with a real JSON-RPC/MCP
+  transport wrapper left as a follow-up decision.
+
+Phase 7 SQL / persistence local setup:
+
+- Docs require persistence, but do not prescribe the local development database provisioning flow.
+- POC decision: create a local Docker PostgreSQL 16 container named roso-postgres, keep SQLite as
+  the zero-config fallback in .env.example, and switch real local runs through DATABASE_URL.
+
+Phase 7 Viator live ingestion assumption:
+
+- Viator products reference destination taxonomy IDs. If the referenced destination has not been
+  ingested locally yet, POC product ingestion keeps viator_primary_destination_id in the raw payload
+  but leaves the relational destination_entity_id unset to avoid failing the product import.
+
+Phase 7 SEMrush keyword intelligence assumption:
+
+- Docs require keyword volume/intent/PAA style inputs, but do not specify exact target markets per
+  entity. POC default is SEMRUSH_DATABASE=us, overridable per request with the database query param.
+- SEMrush returns SEO API reports as CSV. POC stores normalized related keywords and phrase
+  questions, then includes the latest stored keyword intel in drafting context.
+
+Phase 7 vector similarity decision:
+
+- User decided not to use Qdrant for the POC. Use Postgres pgvector plus local sentence-transformer
+  embeddings for the duplicate/similarity gate.
+- The first local Postgres container was based on postgres:16 and did not include pgvector. POC
+  keeps it untouched and uses a separate pgvector-enabled container named roso-pgvector on port
+  5433.
+
+City / country page publishing gap:
+
+- Docs explicitly define City Page and Country Page surfaces. Earlier POC work exposed city/country
+  Model C API rollups but did not publish dedicated landing page records.
+- POC decision: city/country pages are backend PublishedRecord rows first. Frontend routes/templates
+  can consume the same published payloads later.
