@@ -6,7 +6,7 @@ import {
   getAdminProducts,
   getAdminPublishing,
 } from "@/lib/api";
-import { AdminAction, CreateCountryForm } from "./AdminActions";
+import { AdminAction, TaxonomyCreatePanel } from "./AdminActions";
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
@@ -52,8 +52,8 @@ export default async function AdminPage() {
             Admin Control Center
           </h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            POC admin for destination publishing, Product Ops Set control, AI content status, and
-            SEO publishing records. Labels separate recomputing decisions from generating AI drafts.
+            Document-aligned admin foundation for taxonomy, Product Ops, AI content, and publishing
+            governance. CMS editing, locks, media, and moderation remain follow-up modules.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -77,11 +77,11 @@ export default async function AdminPage() {
       <section className="mt-10 rounded-lg border border-slate-200 bg-white p-5">
         <h2 className="text-xl font-semibold text-brand-navy">Destinations</h2>
         <p className="mt-1 text-sm text-slate-600">
-          Country and city page publishing. Country click routes travelers to country pages; city
-          click routes to city decision hubs.
+          Taxonomy management for the geographic hierarchy used by breadcrumbs, SEO state, city
+          hubs, country pages, and attraction mapping.
         </p>
         <div className="mt-4">
-          <CreateCountryForm />
+          <TaxonomyCreatePanel />
         </div>
         <div className="mt-5 space-y-5">
           {destinations?.countries.map((country) => (
@@ -95,15 +95,40 @@ export default async function AdminPage() {
                       active={country.has_country_node}
                       label={country.has_country_node ? `${country.source} taxonomy` : "Grouped from cities"}
                     />
+                    {country.index_state && (
+                      <StatusBadge active={country.index_state === "indexed"} label={country.index_state} />
+                    )}
                     <span className="text-xs text-slate-500">{country.cities.length} cities</span>
+                    <span className="text-xs text-slate-500">{country.regions.length} regions</span>
                   </div>
                 </div>
-                <AdminAction
-                  endpoint={`/countries/${encodeURIComponent(country.country)}/publish`}
-                  label="Publish country page"
-                  compact
-                />
+                <div className="flex flex-wrap gap-2">
+                  <AdminAction
+                    endpoint={`/countries/${encodeURIComponent(country.country)}/publish`}
+                    label="Publish country page"
+                    compact
+                  />
+                  {country.published && country.index_state !== "indexed" && (
+                    <AdminAction
+                      endpoint={`/countries/${encodeURIComponent(country.country)}/promote`}
+                      label="Promote to indexed"
+                      compact
+                    />
+                  )}
+                </div>
               </div>
+              {country.regions.length > 0 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {country.regions.map((region) => (
+                    <span
+                      key={region.entity_id}
+                      className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600"
+                    >
+                      {region.name} · {region.source}
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                 {country.cities.map((city) => (
                   <div key={city.entity_id} className="rounded-md bg-slate-50 p-3">
@@ -111,7 +136,9 @@ export default async function AdminPage() {
                       <div>
                         <p className="font-medium text-brand-navy">{city.name}</p>
                         <p className="text-xs text-slate-500">
-                          {city.products_count} products, {city.picks_count} picks
+                          {city.region ? `${city.region} · ` : ""}
+                          {city.products_count} products, {city.attractions_count} attractions,{" "}
+                          {city.picks_count} picks
                         </p>
                       </div>
                       <StatusBadge active={city.published} label={city.published ? "Live" : "Draft"} />
@@ -221,7 +248,7 @@ export default async function AdminPage() {
                   <div>
                     <p className="font-medium text-brand-navy">{record.name}</p>
                     <p className="text-xs text-slate-500">
-                      {record.entity_type} - JSON-LD nodes {record.json_ld_nodes}
+                      {record.entity_type} - {record.index_state} - JSON-LD nodes {record.json_ld_nodes}
                     </p>
                     <a
                       href={record.canonical_url}

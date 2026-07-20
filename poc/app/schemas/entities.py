@@ -107,6 +107,35 @@ class CountryCreateRequest(BaseModel):
     images: list[str] = Field(default_factory=list)
 
 
+class RegionCreateRequest(BaseModel):
+    country: str = Field(min_length=2, max_length=120)
+    name: str = Field(min_length=2, max_length=120)
+    description: str | None = None
+    images: list[str] = Field(default_factory=list)
+
+
+class CityCreateRequest(BaseModel):
+    country: str = Field(min_length=2, max_length=120)
+    name: str = Field(min_length=2, max_length=120)
+    region: str | None = None
+    description: str | None = None
+    images: list[str] = Field(default_factory=list)
+    lat: float | None = None
+    lng: float | None = None
+
+
+class AttractionCreateRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    destination_entity_id: str | None = None
+    country: str | None = None
+    city: str | None = None
+    description: str | None = None
+    official_website: str | None = None
+    images: list[str] = Field(default_factory=list)
+    lat: float | None = None
+    lng: float | None = None
+
+
 class EnrichRequest(BaseModel):
     manual_overrides: dict[str, Any] = Field(default_factory=dict)
 

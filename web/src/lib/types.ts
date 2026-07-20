@@ -143,18 +143,31 @@ export interface AdminCityRow {
   entity_id: string;
   name: string;
   country: string;
+  region: string | null;
   published: boolean;
   products_count: number;
+  attractions_count: number;
   picks_count: number;
   suppressed: boolean;
+  source: string;
+}
+
+export interface AdminRegionRow {
+  entity_id: string;
+  name: string;
+  country: string;
+  published: boolean;
+  source: string;
 }
 
 export interface AdminCountryRow {
   country: string;
   entity_id: string;
   published: boolean;
+  index_state?: "indexed" | "noindex" | null;
   has_country_node: boolean;
   source: string;
+  regions: AdminRegionRow[];
   cities: AdminCityRow[];
 }
 
@@ -211,6 +224,7 @@ export interface AdminPublishingRow {
   entity_type: string;
   name: string;
   status: string;
+  index_state: "indexed" | "noindex";
   canonical_url: string;
   date_modified: string;
   json_ld_nodes: number;

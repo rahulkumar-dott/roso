@@ -105,3 +105,38 @@ def test_admin_create_country_rejects_duplicate_country_node():
 
     assert duplicate["errors"] == ["Country 'Austria' already has a country taxonomy node"]
     assert duplicate["entity_id"] == "dest_country_austria"
+
+
+def test_admin_create_region_city_and_attraction_taxonomy_nodes():
+    db = make_session()
+
+    region = admin.create_region(db, "Austria", "Vienna Region")
+    city = admin.create_city(db, "Austria", "Vienna", region="Vienna Region")
+    attraction = admin.create_attraction(
+        db,
+        "Schonbrunn Palace",
+        destination_entity_id="dest_city_austria_vienna",
+        official_website="https://www.schoenbrunn.at/",
+    )
+    destinations = admin.destinations(db)
+
+    assert region["errors"] == []
+    assert region["entity_id"] == "dest_region_austria_vienna-region"
+    assert city["errors"] == []
+    assert city["entity_id"] == "dest_city_austria_vienna"
+    assert attraction["errors"] == []
+    assert attraction["entity_id"] == "attr_internal_austria_vienna_schonbrunn-palace"
+    assert destinations["countries"][0]["regions"][0]["name"] == "Vienna Region"
+    assert destinations["countries"][0]["cities"][0]["name"] == "Vienna"
+    assert destinations["countries"][0]["cities"][0]["attractions_count"] == 1
+
+
+def test_admin_publishing_exposes_index_state():
+    db = make_session()
+    admin.create_country(db, "Austria")
+    publisher.publish_country_page(db, "Austria")
+
+    row = admin.publishing(db)["records"][0]
+
+    assert row["entity_type"] == "country"
+    assert row["index_state"] == "noindex"
