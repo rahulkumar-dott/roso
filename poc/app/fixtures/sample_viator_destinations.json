@@ -1,0 +1,50 @@
+[
+  {
+    "entity_id": "dest_rome",
+    "name": "Rome",
+    "country": "Italy",
+    "region": "Lazio",
+    "city": "Rome",
+    "source": "viator",
+    "description": "The Eternal City, home to the Colosseum, Vatican, and centuries of history.",
+    "images": ["https://cdn.example.com/rome/hero.jpg"],
+    "lat": 41.9028,
+    "lng": 12.4964
+  },
+  {
+    "entity_id": "dest_paris",
+    "name": "Paris",
+    "country": "France",
+    "region": "Ile-de-France",
+    "city": "Paris",
+    "source": "viator",
+    "description": "The City of Light, famous for the Eiffel Tower and the Louvre.",
+    "images": ["https://cdn.example.com/paris/hero.jpg"],
+    "lat": 48.8566,
+    "lng": 2.3522
+  },
+  {
+    "entity_id": "dest_barcelona",
+    "name": "Barcelona",
+    "country": "Spain",
+    "region": "Catalonia",
+    "city": "Barcelona",
+    "source": "viator",
+    "description": "Gaudi's masterpieces and Mediterranean beaches.",
+    "images": ["https://cdn.example.com/barcelona/hero.jpg"],
+    "lat": 41.3874,
+    "lng": 2.1686
+  },
+  {
+    "entity_id": "dest_amsterdam",
+    "name": "Amsterdam",
+    "country": "Netherlands",
+    "region": "North Holland",
+    "city": "Amsterdam",
+    "source": "viator",
+    "description": "Canals, museums, and cycling culture.",
+    "images": ["https://cdn.example.com/amsterdam/hero.jpg"],
+    "lat": 52.3676,
+    "lng": 4.9041
+  }
+]

@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+poc.db
+.pytest_cache/
+.venv/
+out_verify.txt

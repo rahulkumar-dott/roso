@@ -1,0 +1,41 @@
+[
+  {
+    "entity_id": "poi_colosseum",
+    "destination_entity_id": "dest_rome",
+    "name": "Colosseum",
+    "country": "Italy",
+    "city": "Rome",
+    "source": "internal",
+    "description": "Ancient amphitheatre in central Rome.",
+    "images": ["https://cdn.example.com/rome/colosseum.jpg"],
+    "lat": 41.8902,
+    "lng": 12.4922,
+    "official_website": "https://colosseo.it"
+  },
+  {
+    "entity_id": "poi_vatican_museums",
+    "destination_entity_id": "dest_rome",
+    "name": "Vatican Museums",
+    "country": "Vatican City",
+    "city": "Vatican City",
+    "source": "internal",
+    "description": "Museum complex housing papal art collections.",
+    "images": ["https://cdn.example.com/rome/vatican-museums.jpg"],
+    "lat": 41.9065,
+    "lng": 12.4536,
+    "official_website": "https://www.museivaticani.va"
+  },
+  {
+    "entity_id": "poi_eiffel_tower",
+    "destination_entity_id": "dest_paris",
+    "name": "Eiffel Tower",
+    "country": "France",
+    "city": "Paris",
+    "source": "internal",
+    "description": "Landmark wrought-iron tower on the Champ de Mars.",
+    "images": ["https://cdn.example.com/paris/eiffel-tower.jpg"],
+    "lat": 48.8584,
+    "lng": 2.2945,
+    "official_website": "https://www.toureiffel.paris"
+  }
+]
