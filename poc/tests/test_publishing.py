@@ -78,6 +78,24 @@ def ingest_city_and_products(db):
     model_c.bulk_auto_confirm(db)
 
 
+def ingest_france_city(db):
+    ingestion.ingest_destination(
+        db,
+        {
+            "entity_id": "dest_paris",
+            "name": "Paris",
+            "country": "France",
+            "region": "Ile-de-France",
+            "city": "Paris",
+            "source": "internal",
+            "description": "The City of Light.",
+            "images": ["paris.jpg"],
+            "lat": 48.8566,
+            "lng": 2.3522,
+        },
+    )
+
+
 def add_valid_draft(db, entity_id="poi_colosseum", version=1):
     draft = DraftedContent(
         entity_id=entity_id,
@@ -281,6 +299,34 @@ def test_publish_country_page_creates_dedicated_country_record():
     assert result["canonical_url"] == "https://www.rosotravel.com/en/italy/"
     assert result["content"]["page_type"] == "country"
     assert result["content"]["top_cities"][0]["entity_id"] == "dest_rome"
+
+
+def test_promoting_one_country_does_not_index_other_countries():
+    db = make_session()
+    ingest_city_and_products(db)
+    ingest_france_city(db)
+    publisher.publish_country_page(db, "Italy")
+    publisher.publish_country_page(db, "France")
+
+    italy, italy_errors = publisher.promote_country_page(db, "Italy")
+    france = publisher.get_published(db, "country_france")
+
+    assert italy_errors == []
+    assert italy["index_state"] == "indexed"
+    assert france["index_state"] == "noindex"
+
+
+def test_legacy_country_without_manual_promotion_marker_is_noindex():
+    db = make_session()
+    ingest_city_and_products(db)
+    publisher.publish_country_page(db, "Italy")
+    record = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == "country_italy"))
+    record.index_state = "indexed"
+    db.commit()
+
+    result = publisher.get_published(db, "country_italy")
+
+    assert result["index_state"] == "noindex"
 
 
 def test_publish_country_requires_stored_destination():

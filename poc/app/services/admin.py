@@ -27,6 +27,14 @@ def _clean_name(value: str) -> str:
     return " ".join(value.strip().split())
 
 
+def _effective_index_state(record: PublishedRecord | None) -> str | None:
+    if record is None:
+        return None
+    if record.entity_type == "country" and not (record.content or {}).get("country_index_promoted"):
+        return "noindex"
+    return record.index_state
+
+
 def _latest_raw(db: Session, entity_id: str) -> RawVersion | None:
     return db.scalar(
         select(RawVersion)
@@ -139,7 +147,7 @@ def destinations(db: Session) -> dict[str, Any]:
                 "country": destination.country,
                 "entity_id": f"country_{schema_builder.slugify(destination.country)}",
                 "published": bool(published_country),
-                "index_state": published_country.index_state if published_country else None,
+                "index_state": _effective_index_state(published_country),
                 "has_country_node": False,
                 "source": destination.source,
                 "regions": [],
@@ -395,7 +403,7 @@ def publishing(db: Session) -> dict[str, Any]:
                 "entity_type": record.entity_type,
                 "name": record.content.get("h1") or record.entity_id,
                 "status": record.status,
-                "index_state": record.index_state,
+                "index_state": _effective_index_state(record),
                 "locked_fields": sorted(
                     field
                     for field, meta in (record.content_locks or {}).items()

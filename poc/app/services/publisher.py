@@ -94,9 +94,19 @@ def _record_out(record: PublishedRecord) -> dict[str, Any]:
         "date_modified": record.date_modified.isoformat(),
         "version": record.version,
         "status": record.status,
-        "index_state": record.index_state,
+        "index_state": _effective_index_state(record),
         "content_locks": record.content_locks or {},
     }
+
+
+def _is_country_promoted(record: PublishedRecord) -> bool:
+    return bool(record.entity_type == "country" and (record.content or {}).get("country_index_promoted") is True)
+
+
+def _effective_index_state(record: PublishedRecord) -> str:
+    if record.entity_type == "country" and not _is_country_promoted(record):
+        return "noindex"
+    return record.index_state
 
 
 def _apply_content_locks(content: dict[str, Any], existing: PublishedRecord | None) -> dict[str, Any]:
@@ -578,6 +588,8 @@ def _upsert_published_record(
         record.entity_type = entity_type
         record.canonical_url = canonical
         locked_content = _apply_content_locks(content, existing)
+        if entity_type == "country" and not _is_country_promoted(existing):
+            record.index_state = "noindex"
         record.schema_json = schema_json
         record.content = locked_content
         record.date_modified = now
@@ -761,6 +773,9 @@ def promote_country_page(db: Session, country: str) -> tuple[dict[str, Any] | No
         return None, [f"Country '{country}' has not been published yet"]
     if record.entity_type != "country":
         return None, [f"'{entity_id}' is not a country page"]
+    content = dict(record.content or {})
+    content["country_index_promoted"] = True
+    record.content = content
     record.index_state = "indexed"
     db.commit()
     return _record_out(record), []
