@@ -35,6 +35,15 @@ def publish_country_page(country: str, db: Session = Depends(get_db)) -> dict:
     return result
 
 
+@router.post("/countries/{country}/promote", response_model=PublishOut)
+def promote_country_page(country: str, db: Session = Depends(get_db)) -> dict:
+    result, errors = publisher.promote_country_page(db, country)
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+    assert result is not None
+    return result
+
+
 @router.get("/published/{entity_id}", response_model=PublishOut)
 def get_published(entity_id: str, db: Session = Depends(get_db)) -> dict:
     result = publisher.get_published(db, entity_id)

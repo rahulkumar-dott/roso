@@ -24,6 +24,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       record?.content.meta_description ??
       `Explore ${country.name} through Rosotravel country and city decision pages.`,
     alternates: record ? { canonical: record.canonical_url } : undefined,
+    // WBS "Lite Page" governance: a country page is noindex,follow until a
+    // human manually promotes it - Google can crawl its links but won't rank
+    // the page itself until then.
+    robots:
+      record?.index_state === "noindex"
+        ? { index: false, follow: true }
+        : { index: true, follow: true },
   };
 }
 
@@ -55,6 +62,11 @@ export default async function CountryPage({ params }: Props) {
           <h1 className="mt-2 text-4xl font-bold tracking-tight">
             {content?.h1 ?? `Discover ${country.name}`}
           </h1>
+          {record?.index_state === "noindex" && (
+            <p className="mt-3 inline-block rounded-full bg-brand-accent/90 px-3 py-1 text-xs font-semibold text-white">
+              Not yet promoted - hidden from search (noindex,follow)
+            </p>
+          )}
         </div>
       </section>
 

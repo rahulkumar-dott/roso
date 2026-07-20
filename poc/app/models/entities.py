@@ -212,6 +212,10 @@ class PublishedRecord(Base):
     date_modified: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     version: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String, default="published")  # published | held
+    # WBS Country_Page "Lite Page" governance: countries default to
+    # noindex,follow until a human manually promotes them; other entity
+    # types have no such gate and are always "indexed".
+    index_state: Mapped[str] = mapped_column(String, default="indexed")  # indexed | noindex
 
 
 class McpToolAuditLog(Base):

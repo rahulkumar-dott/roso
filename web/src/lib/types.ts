@@ -70,6 +70,7 @@ export interface PublishedRecord {
   date_modified: string;
   version: number;
   status: string;
+  index_state?: "indexed" | "noindex";
 }
 
 export interface CityPick {

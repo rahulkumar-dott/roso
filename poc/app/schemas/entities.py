@@ -230,6 +230,7 @@ class PublishOut(BaseModel):
     date_modified: str
     version: int
     status: str
+    index_state: str = "indexed"
 
 
 class PublishListOut(BaseModel):

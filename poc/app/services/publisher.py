@@ -94,6 +94,7 @@ def _record_out(record: PublishedRecord) -> dict[str, Any]:
         "date_modified": record.date_modified.isoformat(),
         "version": record.version,
         "status": record.status,
+        "index_state": record.index_state,
     }
 
 
@@ -544,6 +545,10 @@ def _upsert_published_record(
     existing = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
     now = _utcnow()
     if existing is None:
+        # Country pages are a WBS "Lite Page": noindex,follow until a human
+        # manually promotes them (see promote_country_page below). No other
+        # entity type has this gate - they publish straight to indexed.
+        initial_index_state = "noindex" if entity_type == "country" else "indexed"
         record = PublishedRecord(
             entity_id=entity_id,
             entity_type=entity_type,
@@ -554,6 +559,7 @@ def _upsert_published_record(
             date_modified=now,
             version=version,
             status="published",
+            index_state=initial_index_state,
         )
         db.add(record)
     else:
@@ -565,6 +571,8 @@ def _upsert_published_record(
         record.date_modified = now
         record.version = version
         record.status = "published"
+        # index_state is intentionally left untouched on republish - promotion
+        # is a one-time manual gate, not something content edits should reset.
     db.commit()
     return record
 
@@ -724,6 +732,21 @@ def publish_country_page(db: Session, country: str) -> tuple[dict[str, Any] | No
         content=content,
         version=1,
     )
+    return _record_out(record), []
+
+
+def promote_country_page(db: Session, country: str) -> tuple[dict[str, Any] | None, list[str]]:
+    """Manual promotion gate per WBS: a country page starts noindex,follow
+    and only becomes indexable once a human explicitly promotes it here.
+    """
+    entity_id = f"country_{schema_builder.slugify(country)}"
+    record = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
+    if record is None:
+        return None, [f"Country '{country}' has not been published yet"]
+    if record.entity_type != "country":
+        return None, [f"'{entity_id}' is not a country page"]
+    record.index_state = "indexed"
+    db.commit()
     return _record_out(record), []
 
 
