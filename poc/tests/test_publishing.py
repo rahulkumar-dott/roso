@@ -208,6 +208,52 @@ def test_republish_preserves_date_published_and_entity_id():
     assert first_entity_node["@id"] == second_entity_node["@id"]
 
 
+def test_manual_content_edit_locks_field_against_republish():
+    db = make_session()
+    ingest_attraction(db)
+    add_fact(db)
+    draft = add_valid_draft(db)
+    publisher.publish_entity(db, "poi_colosseum")
+
+    edited, edit_errors = publisher.edit_published_content(
+        db,
+        "poi_colosseum",
+        updates={"h1": "Manually Locked Colosseum Title"},
+        lock_fields=[],
+        unlock_fields=[],
+        edited_by="editor",
+    )
+    draft.h1 = "Regenerated Colosseum Title"
+    draft.version = 2
+    db.commit()
+    republished, publish_errors = publisher.publish_entity(db, "poi_colosseum")
+
+    assert edit_errors == []
+    assert edited["content"]["h1"] == "Manually Locked Colosseum Title"
+    assert edited["content_locks"]["h1"]["locked"] is True
+    assert publish_errors == []
+    assert republished["content"]["h1"] == "Manually Locked Colosseum Title"
+
+
+def test_manual_content_edit_rejects_unsupported_fields():
+    db = make_session()
+    ingest_attraction(db)
+    add_fact(db)
+    add_valid_draft(db)
+    publisher.publish_entity(db, "poi_colosseum")
+
+    result, errors = publisher.edit_published_content(
+        db,
+        "poi_colosseum",
+        updates={"canonical_url": "https://example.com/unsafe"},
+        lock_fields=[],
+        unlock_fields=[],
+    )
+
+    assert result is None
+    assert errors == ["Unsupported content fields: canonical_url"]
+
+
 def test_publish_city_page_creates_dedicated_city_record():
     db = make_session()
     ingest_city_and_products(db)

@@ -95,7 +95,18 @@ def _record_out(record: PublishedRecord) -> dict[str, Any]:
         "version": record.version,
         "status": record.status,
         "index_state": record.index_state,
+        "content_locks": record.content_locks or {},
     }
+
+
+def _apply_content_locks(content: dict[str, Any], existing: PublishedRecord | None) -> dict[str, Any]:
+    if not existing or not existing.content_locks:
+        return content
+    merged = dict(content)
+    for field, meta in existing.content_locks.items():
+        if isinstance(meta, dict) and meta.get("locked") and field in existing.content:
+            merged[field] = existing.content[field]
+    return merged
 
 
 def _latest_raw_payload(db: Session, entity_id: str) -> dict[str, Any]:
@@ -566,8 +577,9 @@ def _upsert_published_record(
         record = existing
         record.entity_type = entity_type
         record.canonical_url = canonical
+        locked_content = _apply_content_locks(content, existing)
         record.schema_json = schema_json
-        record.content = content
+        record.content = locked_content
         record.date_modified = now
         record.version = version
         record.status = "published"
@@ -596,6 +608,7 @@ def publish_entity(db: Session, entity_id: str) -> tuple[dict[str, Any] | None, 
     content = _content_snapshot(db, draft, canonical)
     if model_snapshot:
         content["model_c"] = model_snapshot
+    content = _apply_content_locks(content, existing)
 
     existing_schema_id = None
     if existing:
@@ -662,6 +675,7 @@ def publish_city_page(db: Session, city_id: str) -> tuple[dict[str, Any] | None,
     facts = facts_payload["resolved_fields"] if facts_payload else {}
     source_facts = schema_builder.factual_sources(db, city_id)
     existing = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == city_id))
+    content = _apply_content_locks(content, existing)
     existing_schema_id = _existing_schema_entity_id(existing)
     schema_json = schema_builder.build_schema(
         db,
@@ -703,6 +717,8 @@ def publish_country_page(db: Session, country: str) -> tuple[dict[str, Any] | No
     entity_id = f"country_{schema_builder.slugify(normalized_country)}"
     canonical = schema_builder.country_canonical_url(normalized_country)
     content, model_snapshot = _country_content_snapshot(db, normalized_country, canonical)
+    existing = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
+    content = _apply_content_locks(content, existing)
     schema_json = schema_builder.build_schema(
         db,
         entity_id=entity_id,
@@ -712,7 +728,7 @@ def publish_country_page(db: Session, country: str) -> tuple[dict[str, Any] | No
         facts={},
         model_c_snapshot=model_snapshot,
         existing_schema_id=_existing_schema_entity_id(
-            db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
+            existing
         ),
     )
     errors = schema_builder.validate(
@@ -746,6 +762,105 @@ def promote_country_page(db: Session, country: str) -> tuple[dict[str, Any] | No
     if record.entity_type != "country":
         return None, [f"'{entity_id}' is not a country page"]
     record.index_state = "indexed"
+    db.commit()
+    return _record_out(record), []
+
+
+def _schema_context_for_record(
+    db: Session, record: PublishedRecord
+) -> tuple[Any | None, dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    if record.entity_type == "country":
+        country = record.content.get("country_name") or record.entity_id.removeprefix("country_").replace("-", " ")
+        destinations = _country_destinations(db, country)
+        return (destinations[0] if destinations else None), {}, [], record.content.get("model_c")
+
+    found = find_entity(db, record.entity_id)
+    if found is None:
+        return None, {}, [], None
+    _, entity = found
+    facts_payload = get_facts(db, record.entity_id)
+    facts = facts_payload["resolved_fields"] if facts_payload else {}
+    source_facts = schema_builder.factual_sources(db, record.entity_id)
+    model_snapshot = record.content.get("model_c")
+    return entity, facts, source_facts, model_snapshot if isinstance(model_snapshot, dict) else None
+
+
+def edit_published_content(
+    db: Session,
+    entity_id: str,
+    updates: dict[str, Any],
+    lock_fields: list[str],
+    unlock_fields: list[str],
+    edited_by: str | None = "admin",
+) -> tuple[dict[str, Any] | None, list[str]]:
+    record = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
+    if record is None:
+        return None, [f"Published record '{entity_id}' not found"]
+
+    content = dict(record.content or {})
+    locks = dict(record.content_locks or {})
+    allowed_fields = {
+        "h1",
+        "meta_title",
+        "meta_description",
+        "overview",
+        "body",
+        "about_rosotravel",
+        "highlights",
+        "faq",
+        "local_tips",
+        "top_city_names",
+        "top_pick_titles",
+    }
+    unknown_fields = sorted(set(updates) - allowed_fields)
+    if unknown_fields:
+        return None, [f"Unsupported content fields: {', '.join(unknown_fields)}"]
+
+    now = _utcnow()
+    for field, value in updates.items():
+        content[field] = value
+        locks[field] = {
+            "locked": True,
+            "edited_by": edited_by or "admin",
+            "locked_at": now.isoformat(),
+            "reason": "manual_cms_edit",
+        }
+    for field in lock_fields:
+        if field in content:
+            locks[field] = {
+                "locked": True,
+                "edited_by": edited_by or "admin",
+                "locked_at": now.isoformat(),
+                "reason": "manual_lock",
+            }
+    for field in unlock_fields:
+        locks.pop(field, None)
+
+    entity, facts, source_facts, model_snapshot = _schema_context_for_record(db, record)
+    if entity is not None:
+        schema_json = schema_builder.build_schema(
+            db,
+            entity_id=record.entity_id,
+            entity_type=record.entity_type,
+            entity=entity,
+            content=content,
+            facts=facts,
+            model_c_snapshot=model_snapshot,
+            existing_schema_id=_existing_schema_entity_id(record),
+        )
+        errors = schema_builder.validate(
+            schema_json=schema_json,
+            content=content,
+            facts=facts,
+            source_facts=source_facts,
+        )
+        if errors:
+            return None, errors
+        record.schema_json = schema_json
+
+    record.content = content
+    record.content_locks = locks
+    record.date_modified = now
     db.commit()
     return _record_out(record), []
 

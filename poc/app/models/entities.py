@@ -208,6 +208,7 @@ class PublishedRecord(Base):
     canonical_url: Mapped[str] = mapped_column(String)
     schema_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     content: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    content_locks: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     date_published: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     date_modified: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     version: Mapped[int] = mapped_column(Integer)

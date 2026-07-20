@@ -196,3 +196,94 @@ export function TaxonomyCreatePanel() {
     </div>
   );
 }
+
+export function ContentLockForm({
+  entityId,
+  lockedFields,
+}: {
+  entityId: string;
+  lockedFields: string[];
+}) {
+  const [field, setField] = useState("h1");
+  const [value, setValue] = useState("");
+  const [message, setMessage] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const isLocked = lockedFields.includes(field);
+
+  function submit(unlock = false) {
+    if (!unlock && !value.trim()) {
+      setMessage("Content value is required.");
+      return;
+    }
+    setMessage("");
+    startTransition(async () => {
+      try {
+        const response = await fetch(`${BROWSER_API_BASE_URL}/published/${entityId}/content`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            unlock
+              ? { unlock_fields: [field], edited_by: "admin_ui" }
+              : { updates: { [field]: value.trim() }, edited_by: "admin_ui" },
+          ),
+        });
+        if (!response.ok) {
+          const text = await response.text();
+          setMessage(`Failed ${response.status}: ${text.slice(0, 140)}`);
+          return;
+        }
+        setValue("");
+        setMessage(unlock ? "Unlocked. Refresh to see updated data." : "Saved and locked. Refresh to see updated data.");
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Request failed");
+      }
+    });
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-slate-200 bg-white p-3">
+      <div className="grid gap-2">
+        <select
+          value={field}
+          onChange={(event) => setField(event.target.value)}
+          className="rounded-md border border-slate-300 px-2 py-2 text-xs text-brand-navy outline-none focus:border-brand-primary"
+        >
+          <option value="h1">H1</option>
+          <option value="meta_title">Meta title</option>
+          <option value="meta_description">Meta description</option>
+          <option value="overview">Overview</option>
+          <option value="body">Body</option>
+          <option value="about_rosotravel">About Rosotravel</option>
+        </select>
+        <textarea
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder={`New ${field.replaceAll("_", " ")}`}
+          rows={2}
+          className="rounded-md border border-slate-300 px-2 py-2 text-xs text-brand-navy outline-none focus:border-brand-primary"
+        />
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => submit(false)}
+            disabled={isPending}
+            className="rounded-md bg-brand-primary px-3 py-2 text-xs font-semibold text-white transition hover:bg-brand-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isPending ? "Saving..." : "Save + lock"}
+          </button>
+          {isLocked && (
+            <button
+              type="button"
+              onClick={() => submit(true)}
+              disabled={isPending}
+              className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Unlock
+            </button>
+          )}
+        </div>
+      </div>
+      {message && <p className="mt-2 text-xs text-slate-500">{message}</p>}
+    </div>
+  );
+}

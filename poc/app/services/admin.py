@@ -396,6 +396,11 @@ def publishing(db: Session) -> dict[str, Any]:
                 "name": record.content.get("h1") or record.entity_id,
                 "status": record.status,
                 "index_state": record.index_state,
+                "locked_fields": sorted(
+                    field
+                    for field, meta in (record.content_locks or {}).items()
+                    if isinstance(meta, dict) and meta.get("locked")
+                ),
                 "canonical_url": record.canonical_url,
                 "date_modified": record.date_modified.isoformat(),
                 "json_ld_nodes": len(record.schema_json.get("@graph", [])),

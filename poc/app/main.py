@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.db import Base, engine
+from app.core.db import Base, engine, ensure_schema_compatibility
 from app.routers import (
     admin,
     decisions,
@@ -16,6 +16,7 @@ from app.routers import (
 )
 
 Base.metadata.create_all(bind=engine)
+ensure_schema_compatibility()
 
 app = FastAPI(
     title="Rosotravel AI Platform - POC",

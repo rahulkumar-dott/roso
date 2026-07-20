@@ -71,6 +71,7 @@ export interface PublishedRecord {
   version: number;
   status: string;
   index_state?: "indexed" | "noindex";
+  content_locks?: Record<string, { locked?: boolean; edited_by?: string; locked_at?: string }>;
 }
 
 export interface CityPick {
@@ -225,6 +226,7 @@ export interface AdminPublishingRow {
   name: string;
   status: string;
   index_state: "indexed" | "noindex";
+  locked_fields: string[];
   canonical_url: string;
   date_modified: string;
   json_ld_nodes: number;

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.schemas.entities import PublishListOut, PublishOut
+from app.schemas.entities import PublishedContentEditRequest, PublishListOut, PublishOut
 from app.services import publisher
 
 router = APIRouter(tags=["publishing"])
@@ -49,6 +49,26 @@ def get_published(entity_id: str, db: Session = Depends(get_db)) -> dict:
     result = publisher.get_published(db, entity_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Published record '{entity_id}' not found")
+    return result
+
+
+@router.post("/published/{entity_id}/content", response_model=PublishOut)
+def edit_published_content(
+    entity_id: str,
+    payload: PublishedContentEditRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    result, errors = publisher.edit_published_content(
+        db,
+        entity_id,
+        updates=payload.updates,
+        lock_fields=payload.lock_fields,
+        unlock_fields=payload.unlock_fields,
+        edited_by=payload.edited_by,
+    )
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+    assert result is not None
     return result
 
 

@@ -6,7 +6,7 @@ import {
   getAdminProducts,
   getAdminPublishing,
 } from "@/lib/api";
-import { AdminAction, TaxonomyCreatePanel } from "./AdminActions";
+import { AdminAction, ContentLockForm, TaxonomyCreatePanel } from "./AdminActions";
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
@@ -250,6 +250,11 @@ export default async function AdminPage() {
                     <p className="text-xs text-slate-500">
                       {record.entity_type} - {record.index_state} - JSON-LD nodes {record.json_ld_nodes}
                     </p>
+                    {record.locked_fields.length > 0 && (
+                      <p className="mt-1 text-xs text-emerald-700">
+                        Locked: {record.locked_fields.join(", ")}
+                      </p>
+                    )}
                     <a
                       href={record.canonical_url}
                       className="mt-1 block truncate text-xs text-brand-primary"
@@ -259,6 +264,7 @@ export default async function AdminPage() {
                   </div>
                   <StatusBadge active={record.status === "published"} label={record.status} />
                 </div>
+                <ContentLockForm entityId={record.entity_id} lockedFields={record.locked_fields} />
               </div>
             ))}
           </div>

@@ -267,6 +267,14 @@ class PublishOut(BaseModel):
     version: int
     status: str
     index_state: str = "indexed"
+    content_locks: dict[str, Any] = Field(default_factory=dict)
+
+
+class PublishedContentEditRequest(BaseModel):
+    updates: dict[str, Any] = Field(default_factory=dict)
+    lock_fields: list[str] = Field(default_factory=list)
+    unlock_fields: list[str] = Field(default_factory=list)
+    edited_by: str | None = "admin"
 
 
 class PublishListOut(BaseModel):
