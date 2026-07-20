@@ -100,6 +100,13 @@ class EntityOut(BaseModel):
     latest_severity: str | None
 
 
+class CountryCreateRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    region: str | None = None
+    description: str | None = None
+    images: list[str] = Field(default_factory=list)
+
+
 class EnrichRequest(BaseModel):
     manual_overrides: dict[str, Any] = Field(default_factory=dict)
 

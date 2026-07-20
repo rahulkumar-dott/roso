@@ -6,7 +6,7 @@ import {
   getAdminProducts,
   getAdminPublishing,
 } from "@/lib/api";
-import { AdminAction } from "./AdminActions";
+import { AdminAction, CreateCountryForm } from "./AdminActions";
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
@@ -80,14 +80,21 @@ export default async function AdminPage() {
           Country and city page publishing. Country click routes travelers to country pages; city
           click routes to city decision hubs.
         </p>
+        <div className="mt-4">
+          <CreateCountryForm />
+        </div>
         <div className="mt-5 space-y-5">
           {destinations?.countries.map((country) => (
             <div key={country.entity_id} className="rounded-lg border border-slate-200 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="font-semibold text-brand-navy">{country.country}</h3>
-                  <div className="mt-1 flex gap-2">
+                  <div className="mt-1 flex flex-wrap gap-2">
                     <StatusBadge active={country.published} label={country.published ? "Published" : "Not published"} />
+                    <StatusBadge
+                      active={country.has_country_node}
+                      label={country.has_country_node ? `${country.source} taxonomy` : "Grouped from cities"}
+                    />
                     <span className="text-xs text-slate-500">{country.cities.length} cities</span>
                   </div>
                 </div>

@@ -80,3 +80,28 @@ def test_admin_products_exposes_product_ops_fields():
     assert products[0]["in_set"] is True
     assert products[0]["image_url"] == "ticket.jpg"
     assert products[0]["price_from"] == 50
+
+
+def test_admin_create_country_creates_internal_taxonomy_node():
+    db = make_session()
+
+    result = admin.create_country(db, "Austria", description="Austria travel planning.")
+    destinations = admin.destinations(db)
+
+    assert result["errors"] == []
+    assert result["entity_id"] == "dest_country_austria"
+    assert result["entity_type"] == "destination"
+    assert destinations["countries"][0]["country"] == "Austria"
+    assert destinations["countries"][0]["has_country_node"] is True
+    assert destinations["countries"][0]["source"] == "internal"
+    assert destinations["countries"][0]["cities"] == []
+
+
+def test_admin_create_country_rejects_duplicate_country_node():
+    db = make_session()
+
+    admin.create_country(db, "Austria")
+    duplicate = admin.create_country(db, " Austria ")
+
+    assert duplicate["errors"] == ["Country 'Austria' already has a country taxonomy node"]
+    assert duplicate["entity_id"] == "dest_country_austria"

@@ -153,6 +153,8 @@ export interface AdminCountryRow {
   country: string;
   entity_id: string;
   published: boolean;
+  has_country_node: boolean;
+  source: string;
   cities: AdminCityRow[];
 }
 

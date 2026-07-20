@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.schemas.entities import CountryCreateRequest
 from app.services import admin
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -15,6 +16,20 @@ def overview(db: Session = Depends(get_db)) -> dict:
 @router.get("/destinations")
 def destinations(db: Session = Depends(get_db)) -> dict:
     return admin.destinations(db)
+
+
+@router.post("/countries")
+def create_country(payload: CountryCreateRequest, db: Session = Depends(get_db)) -> dict:
+    result = admin.create_country(
+        db,
+        payload.name,
+        region=payload.region,
+        description=payload.description,
+        images=payload.images,
+    )
+    if result["errors"]:
+        raise HTTPException(status_code=422, detail=result["errors"])
+    return result
 
 
 @router.get("/products")

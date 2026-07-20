@@ -17,7 +17,9 @@ from app.models.entities import (
     RawVersion,
     SetMembership,
 )
-from app.services import model_c, schema_builder
+from app.services import ingestion, model_c, schema_builder
+
+CITY_LEVELS = {"CITY", "TOWN", "VILLAGE"}
 
 
 def _latest_raw(db: Session, entity_id: str) -> RawVersion | None:
@@ -131,9 +133,17 @@ def destinations(db: Session) -> dict[str, Any]:
                 "country": destination.country,
                 "entity_id": f"country_{schema_builder.slugify(destination.country)}",
                 "published": bool(_published(db, f"country_{schema_builder.slugify(destination.country)}")),
+                "has_country_node": False,
+                "source": destination.source,
                 "cities": [],
             },
         )
+        if destination.destination_level == "COUNTRY":
+            country["has_country_node"] = True
+            country["source"] = destination.source
+            continue
+        if destination.destination_level not in CITY_LEVELS:
+            continue
         products_count = db.scalar(
             select(func.count())
             .select_from(Product)
@@ -152,6 +162,38 @@ def destinations(db: Session) -> dict[str, Any]:
             }
         )
     return {"countries": list(countries.values())}
+
+
+def create_country(db: Session, name: str, region: str | None = None, description: str | None = None, images: list[str] | None = None) -> dict[str, Any]:
+    country_name = " ".join(name.strip().split())
+    if not country_name:
+        return {"errors": ["Country name is required"]}
+
+    existing_country_node = db.scalar(
+        select(Destination).where(
+            Destination.destination_level == "COUNTRY",
+            Destination.country.ilike(country_name),
+        )
+    )
+    if existing_country_node:
+        return {
+            "errors": [f"Country '{country_name}' already has a country taxonomy node"],
+            "entity_id": existing_country_node.entity_id,
+        }
+
+    payload = {
+        "entity_id": f"dest_country_{schema_builder.slugify(country_name)}",
+        "name": country_name,
+        "country": country_name,
+        "region": region,
+        "city": None,
+        "destination_level": "COUNTRY",
+        "source": "internal",
+        "description": description or f"{country_name} country taxonomy node.",
+        "images": images or [],
+    }
+    result = ingestion.ingest_destination(db, payload)
+    return {"errors": [], **result}
 
 
 def products(db: Session) -> dict[str, Any]:
