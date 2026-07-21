@@ -2,8 +2,13 @@ import type {
   AdminContentResponse,
   AdminDestinationsResponse,
   AdminOverview,
+  AdminPendingDestinationsResponse,
+  AdminProductDebug,
   AdminProductsResponse,
   AdminPublishingResponse,
+  AdminSimilarityResponse,
+  AdminSiteConfigResponse,
+  AuditLogResponse,
   CityPicksResponse,
   DestinationsTreeResponse,
   PublishedListResponse,
@@ -59,4 +64,24 @@ export function getAdminContent() {
 
 export function getAdminPublishing() {
   return apiGet<AdminPublishingResponse>("/admin/publishing");
+}
+
+export function getAdminPendingDestinations() {
+  return apiGet<AdminPendingDestinationsResponse>("/admin/destinations/pending");
+}
+
+export function getAdminProductDebug(entityId: string) {
+  return apiGet<AdminProductDebug>(`/admin/products/${encodeURIComponent(entityId)}/debug`);
+}
+
+export function getAdminContentSimilarity() {
+  return apiGet<AdminSimilarityResponse>("/admin/content/similarity");
+}
+
+export function getAdminSiteConfig() {
+  return apiGet<AdminSiteConfigResponse>("/admin/site-config");
+}
+
+export function getAuditLog(limit = 50) {
+  return apiGet<AuditLogResponse>(`/admin/audit-log?limit=${limit}`);
 }

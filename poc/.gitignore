@@ -5,3 +5,5 @@ poc.db
 .pytest_cache/
 .venv/
 out_verify.txt
+static/hero_images/
+scripts/_test_image_output_*.png

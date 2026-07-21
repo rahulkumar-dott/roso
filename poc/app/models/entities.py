@@ -26,6 +26,14 @@ class Destination(Base):
     destination_level: Mapped[str] = mapped_column(String, default="CITY")
     source: Mapped[str] = mapped_column(String, default="viator")  # viator | internal
     status: Mapped[str] = mapped_column(String, default="inactive")  # inactive | active
+    # SOW System 1.1 governance: destinations are Viator-sourced + human
+    # approved, not manually created. Existing/internal/demo-seeded rows
+    # default to "approved" so this doesn't retroactively break the demo
+    # dataset; newly Viator-synced rows are explicitly set to
+    # "pending_review" by admin.sync_viator_destinations().
+    review_status: Mapped[str] = mapped_column(
+        String, default="approved"
+    )  # pending_review | approved | rejected
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
@@ -209,6 +217,10 @@ class PublishedRecord(Base):
     schema_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     content: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     content_locks: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # Module 1 governance: {field_name: {"value": ..., "generated_at": ...}}
+    # staged AI regenerations awaiting human accept/reject - never applied to
+    # `content` automatically, per SOW acceptance criteria.
+    content_candidates: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     date_published: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     date_modified: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     version: Mapped[int] = mapped_column(Integer)
@@ -217,6 +229,37 @@ class PublishedRecord(Base):
     # noindex,follow until a human manually promotes them; other entity
     # types have no such gate and are always "indexed".
     index_state: Mapped[str] = mapped_column(String, default="indexed")  # indexed | noindex
+
+
+class AuditLog(Base):
+    """Module 10: cross-cutting admin audit trail (destination approve/reject/
+    merge, content lock/unlock, regenerate/accept/reject/revert, country
+    promote, site-config updates, etc.)."""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor: Mapped[str] = mapped_column(String, default="admin_poc")
+    action: Mapped[str] = mapped_column(String)
+    entity_id: Mapped[str] = mapped_column(String, index=True)
+    field: Mapped[str | None] = mapped_column(String, nullable=True)
+    before_value: Mapped[Any] = mapped_column(JSON, nullable=True)
+    after_value: Mapped[Any] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class SiteConfig(Base):
+    """Module 8: global site chrome config (header/footer menus, cookie
+    consent, live chat toggle) - key/value, not per-entity."""
+
+    __tablename__ = "site_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String, unique=True, index=True)
+    value: Mapped[Any] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
 
 
 class McpToolAuditLog(Base):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import func, select
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.models.entities import (
     Attraction,
     AudienceVariant,
+    AuditLog,
     Destination,
     DiffResult,
     DraftedContent,
@@ -17,10 +19,15 @@ from app.models.entities import (
     PublishedRecord,
     RawVersion,
     SetMembership,
+    SiteConfig,
 )
-from app.services import ingestion, model_c, schema_builder
+from app.services import audit, ingestion, model_c, schema_builder
 
 CITY_LEVELS = {"CITY", "TOWN", "VILLAGE"}
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _clean_name(value: str) -> str:
@@ -416,3 +423,370 @@ def publishing(db: Session) -> dict[str, Any]:
             for record in records
         ]
     }
+
+
+# ---------------------------------------------------------------------------
+# Module 2 - Destination Governance (Viator sync, pending review, duplicate
+# detection, approve/reject/merge). Corrects the SOW System 1.1 deviation:
+# destinations should be Viator-sourced + human-approved, not manually
+# created. The manual create_country/create_region/create_city endpoints
+# above are kept as-is for POC convenience.
+# ---------------------------------------------------------------------------
+
+
+def _bucket_level(level: str | None) -> str:
+    if level in CITY_LEVELS:
+        return "CITY"
+    return level or "CITY"
+
+
+def _is_possible_duplicate(candidate: Destination, destination: Destination) -> bool:
+    if candidate.entity_id == destination.entity_id:
+        return False
+    if candidate.review_status != "approved":
+        return False
+    if _bucket_level(candidate.destination_level) != _bucket_level(destination.destination_level):
+        return False
+    if (candidate.country or "").strip().lower() != (destination.country or "").strip().lower():
+        return False
+    return (candidate.name or "").strip().lower() == (destination.name or "").strip().lower()
+
+
+def _find_possible_duplicate(db: Session, destination: Destination) -> str | None:
+    candidates = db.scalars(
+        select(Destination)
+        .where(
+            Destination.review_status == "approved",
+            Destination.entity_id != destination.entity_id,
+        )
+        .order_by(Destination.entity_id.asc())
+    ).all()
+    for candidate in candidates:
+        if _is_possible_duplicate(candidate, destination):
+            return candidate.entity_id
+    return None
+
+
+def _resolve_viator_country(by_id: dict[int, dict[str, Any]], raw_row: dict[str, Any]) -> str:
+    """Viator's /destinations feed only puts a `country`/`countryName` field
+    directly on COUNTRY-type rows; CITY/REGION rows only carry
+    `parentDestinationId`. Walk the parent chain (using the raw payloads of
+    the full destinations list already fetched) until we hit the COUNTRY
+    ancestor, so duplicate-detection can compare on real country names
+    instead of "Unknown".
+    """
+    current: dict[str, Any] | None = raw_row
+    seen: set[int] = set()
+    while isinstance(current, dict):
+        if (current.get("type") or "").upper() == "COUNTRY":
+            return str(current.get("name"))
+        parent_id = current.get("parentDestinationId")
+        if parent_id is None or parent_id in seen:
+            break
+        seen.add(parent_id)
+        current = by_id.get(parent_id)
+    return "Unknown"
+
+
+def sync_viator_destinations(
+    db: Session,
+    country: str | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """SOW System 1.1: ingest destinations from the Viator feed as
+    `pending_review`, not immediately active/approved. Raises
+    ViatorConfigError if VIATOR_API_KEY isn't configured (caller maps to 503).
+    """
+    from app.services.viator import ViatorClient
+
+    client = ViatorClient()
+    mapped_rows = client.destinations()
+
+    by_id = {
+        row["viator_destination_id"]: row["raw_viator"]
+        for row in mapped_rows
+        if row.get("viator_destination_id") is not None
+    }
+    for row in mapped_rows:
+        if row.get("country") == "Unknown":
+            row["country"] = _resolve_viator_country(by_id, row.get("raw_viator") or {})
+
+    if country:
+        wanted = _clean_name(country).lower()
+        mapped_rows = [row for row in mapped_rows if (row.get("country") or "").strip().lower() == wanted]
+
+    created: list[dict[str, Any]] = []
+    skipped_existing = 0
+    for row in mapped_rows:
+        if limit is not None and len(created) >= limit:
+            break
+        existing = db.scalar(select(Destination).where(Destination.entity_id == row["entity_id"]))
+        if existing is not None:
+            skipped_existing += 1
+            continue
+        ingestion.ingest_destination(db, row)
+        destination = db.scalar(select(Destination).where(Destination.entity_id == row["entity_id"]))
+        if destination is None:
+            continue
+        destination.review_status = "pending_review"
+        db.commit()
+        duplicate_of = _find_possible_duplicate(db, destination)
+        created.append(
+            {
+                "entity_id": destination.entity_id,
+                "name": destination.name,
+                "country": destination.country,
+                "destination_level": destination.destination_level,
+                "possible_duplicate_of": duplicate_of,
+            }
+        )
+
+    return {
+        "synced": len(created),
+        "skipped_existing": skipped_existing,
+        "total_seen": len(mapped_rows),
+        "created": created,
+    }
+
+
+def pending_destinations(db: Session) -> dict[str, Any]:
+    rows = db.scalars(
+        select(Destination)
+        .where(Destination.review_status == "pending_review")
+        .order_by(Destination.country.asc(), Destination.name.asc())
+    ).all()
+    return {
+        "pending": [
+            {
+                "entity_id": destination.entity_id,
+                "name": destination.name,
+                "country": destination.country,
+                "region": destination.region,
+                "city": destination.city,
+                "destination_level": destination.destination_level,
+                "source": destination.source,
+                "possible_duplicate_of": _find_possible_duplicate(db, destination),
+            }
+            for destination in rows
+        ]
+    }
+
+
+def approve_destination(db: Session, entity_id: str, actor: str = "admin_poc") -> dict[str, Any]:
+    destination = db.scalar(select(Destination).where(Destination.entity_id == entity_id))
+    if destination is None:
+        return {"errors": [f"Destination '{entity_id}' not found"]}
+    before = destination.review_status
+    destination.review_status = "approved"
+    audit.log(
+        db,
+        action="destination_approve",
+        entity_id=entity_id,
+        before=before,
+        after="approved",
+        actor=actor,
+    )
+    db.commit()
+    return {"errors": [], "entity_id": entity_id, "review_status": "approved"}
+
+
+def reject_destination(db: Session, entity_id: str, actor: str = "admin_poc") -> dict[str, Any]:
+    destination = db.scalar(select(Destination).where(Destination.entity_id == entity_id))
+    if destination is None:
+        return {"errors": [f"Destination '{entity_id}' not found"]}
+    before = destination.review_status
+    destination.review_status = "rejected"
+    audit.log(
+        db,
+        action="destination_reject",
+        entity_id=entity_id,
+        before=before,
+        after="rejected",
+        actor=actor,
+    )
+    db.commit()
+    return {"errors": [], "entity_id": entity_id, "review_status": "rejected"}
+
+
+def merge_destination(
+    db: Session,
+    entity_id: str,
+    canonical_entity_id: str,
+    actor: str = "admin_poc",
+) -> dict[str, Any]:
+    if entity_id == canonical_entity_id:
+        return {"errors": ["Cannot merge a destination into itself"]}
+    destination = db.scalar(select(Destination).where(Destination.entity_id == entity_id))
+    canonical = db.scalar(select(Destination).where(Destination.entity_id == canonical_entity_id))
+    if destination is None:
+        return {"errors": [f"Destination '{entity_id}' not found"]}
+    if canonical is None:
+        return {"errors": [f"Canonical destination '{canonical_entity_id}' not found"]}
+
+    products_moved = db.scalars(
+        select(Product).where(Product.destination_entity_id == entity_id)
+    ).all()
+    for product in products_moved:
+        product.destination_entity_id = canonical_entity_id
+
+    attractions_moved = db.scalars(
+        select(Attraction).where(Attraction.destination_entity_id == entity_id)
+    ).all()
+    for attraction in attractions_moved:
+        attraction.destination_entity_id = canonical_entity_id
+
+    before = destination.review_status
+    destination.review_status = "rejected"  # merged-away
+    audit.log(
+        db,
+        action="destination_merge",
+        entity_id=entity_id,
+        before={"review_status": before},
+        after={
+            "review_status": "rejected",
+            "merged_into": canonical_entity_id,
+            "products_reassigned": len(products_moved),
+            "attractions_reassigned": len(attractions_moved),
+        },
+        actor=actor,
+    )
+    db.commit()
+    return {
+        "errors": [],
+        "entity_id": entity_id,
+        "canonical_entity_id": canonical_entity_id,
+        "products_reassigned": len(products_moved),
+        "attractions_reassigned": len(attractions_moved),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Module 4 - Product Ops Debugging Panel
+# ---------------------------------------------------------------------------
+
+
+def product_debug(db: Session, entity_id: str) -> dict[str, Any]:
+    diffs = db.scalars(
+        select(DiffResult).where(DiffResult.entity_id == entity_id).order_by(DiffResult.to_version.asc())
+    ).all()
+    draft = _latest_draft(db, entity_id)
+    return {
+        "entity_id": entity_id,
+        "diff_history": [
+            {
+                "from_version": diff.from_version,
+                "to_version": diff.to_version,
+                "severity": diff.severity,
+                "changed_domains": diff.changed_domains,
+                "created_at": diff.created_at.isoformat(),
+            }
+            for diff in diffs
+        ],
+        "latest_draft": (
+            {
+                "version": draft.version,
+                "status": draft.status,
+                "validation_errors": draft.validation_errors,
+                "similarity_band": (draft.similarity or {}).get("band"),
+                "similarity": draft.similarity,
+            }
+            if draft
+            else None
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Module 3 - Canonical & Duplicate Inspector. Reuses the similarity band/score
+# already computed and stored on each DraftedContent row by
+# drafting.compute_similarity() at draft time - does not recompute.
+# ---------------------------------------------------------------------------
+
+
+def content_similarity(db: Session) -> dict[str, Any]:
+    rows = db.scalars(
+        select(DraftedContent).order_by(DraftedContent.entity_id.asc(), DraftedContent.version.asc())
+    ).all()
+    return {
+        "items": [
+            {
+                "entity_id": row.entity_id,
+                "version": row.version,
+                "band": (row.similarity or {}).get("band"),
+                "score": (row.similarity or {}).get("score"),
+                "nearest_entity_id": (row.similarity or {}).get("nearest_entity_id"),
+            }
+            for row in rows
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# Module 8 - Global Components Admin (site-wide chrome config)
+# ---------------------------------------------------------------------------
+
+DEFAULT_SITE_CONFIG: dict[str, Any] = {
+    "header_nav_menu": [
+        {"label": "Destinations", "url": "/destinations"},
+        {"label": "Experiences", "url": "/experiences"},
+        {"label": "Travel Guides", "url": "/guides"},
+        {"label": "Experts", "url": "/experts"},
+        {"label": "Explore Map", "url": "/explore-map"},
+    ],
+    "footer_sections": {
+        "About": [
+            {"label": "About Rosotravel", "url": "/about"},
+            {"label": "Careers", "url": "/careers"},
+        ],
+        "Explore": [
+            {"label": "Destinations", "url": "/destinations"},
+            {"label": "Travel Guides", "url": "/guides"},
+        ],
+        "Support": [
+            {"label": "Help Center", "url": "/help"},
+            {"label": "Contact Us", "url": "/contact"},
+        ],
+        "Legal": [
+            {"label": "Terms of Service", "url": "/terms"},
+            {"label": "Privacy Policy", "url": "/privacy"},
+        ],
+    },
+    "cookie_consent_enabled": True,
+    "live_chat_enabled": False,
+}
+
+
+def _ensure_site_config_defaults(db: Session) -> None:
+    changed = False
+    for key, value in DEFAULT_SITE_CONFIG.items():
+        existing = db.scalar(select(SiteConfig).where(SiteConfig.key == key))
+        if existing is None:
+            db.add(SiteConfig(key=key, value=value))
+            changed = True
+    if changed:
+        db.commit()
+
+
+def site_config(db: Session) -> dict[str, Any]:
+    _ensure_site_config_defaults(db)
+    rows = db.scalars(select(SiteConfig)).all()
+    return {row.key: row.value for row in rows}
+
+
+def update_site_config(db: Session, key: str, value: Any, actor: str = "admin_poc") -> dict[str, Any]:
+    _ensure_site_config_defaults(db)
+    row = db.scalar(select(SiteConfig).where(SiteConfig.key == key))
+    if row is None:
+        return {"errors": [f"Unknown site-config key '{key}'"]}
+    before = row.value
+    row.value = value
+    audit.log(
+        db,
+        action="site_config_update",
+        entity_id=key,
+        before=before,
+        after=value,
+        actor=actor,
+    )
+    db.commit()
+    return {"errors": [], "key": key, "value": value}

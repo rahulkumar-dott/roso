@@ -124,6 +124,18 @@ class CityCreateRequest(BaseModel):
     lng: float | None = None
 
 
+class MergeDestinationRequest(BaseModel):
+    canonical_entity_id: str
+
+
+class RegenerateFieldRequest(BaseModel):
+    field: str
+
+
+class RevertFieldRequest(BaseModel):
+    field: str
+
+
 class AttractionCreateRequest(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     destination_entity_id: str | None = None
@@ -268,6 +280,7 @@ class PublishOut(BaseModel):
     status: str
     index_state: str = "indexed"
     content_locks: dict[str, Any] = Field(default_factory=dict)
+    content_candidates: dict[str, Any] = Field(default_factory=dict)
 
 
 class PublishedContentEditRequest(BaseModel):

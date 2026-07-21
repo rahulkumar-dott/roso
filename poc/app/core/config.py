@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     semrush_database: str = "us"
     vector_similarity_enabled: bool = True
     sentence_transformer_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    vertex_project: str | None = None
+    vertex_location: str = "global"
 
     # Model C tuning (Phase 4) - kept here so thresholds are configurable in one place.
     pool_min_quality_score: float = 0.6
@@ -46,6 +48,10 @@ class Settings(BaseSettings):
     @property
     def semrush_stub(self) -> bool:
         return not self.semrush_api_key
+
+    @property
+    def image_generation_stub(self) -> bool:
+        return not self.vertex_project
 
 
 @lru_cache

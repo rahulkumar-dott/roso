@@ -1,8 +1,9 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.db import Base
-from app.services import admin, ingestion, model_c, publisher
+from app.models.entities import Destination, Product
+from app.services import admin, audit, ingestion, model_c, publisher
 
 
 def make_session():
@@ -140,3 +141,169 @@ def test_admin_publishing_exposes_index_state():
 
     assert row["entity_type"] == "country"
     assert row["index_state"] == "noindex"
+
+
+class _FakeViatorClient:
+    """Stand-in for ViatorClient().destinations() in tests - no live API call."""
+
+    def destinations(self):
+        return [
+            {
+                "entity_id": "dest_viator_999",
+                "name": "Rome",
+                "country": "Italy",
+                "region": None,
+                "city": "Rome",
+                "destination_level": "CITY",
+                "source": "viator",
+                "description": None,
+                "images": [],
+                "lat": 41.9,
+                "lng": 12.5,
+                "viator_destination_id": 999,
+                "raw_viator": {"destinationId": 999, "name": "Rome", "type": "CITY", "parentDestinationId": 1},
+            },
+            {
+                "entity_id": "dest_viator_1000",
+                "name": "Newtown",
+                "country": "Italy",
+                "region": None,
+                "city": "Newtown",
+                "destination_level": "CITY",
+                "source": "viator",
+                "description": None,
+                "images": [],
+                "lat": 1.0,
+                "lng": 1.0,
+                "viator_destination_id": 1000,
+                "raw_viator": {"destinationId": 1000, "name": "Newtown", "type": "CITY", "parentDestinationId": 1},
+            },
+        ]
+
+
+def test_admin_sync_viator_flags_duplicate_and_pending_queue(monkeypatch):
+    db = make_session()
+    seed(db)  # creates dest_rome (Italy, CITY, approved) + a linked product
+
+    monkeypatch.setattr("app.services.viator.ViatorClient", _FakeViatorClient)
+
+    result = admin.sync_viator_destinations(db)
+
+    assert result["synced"] == 2
+    created_by_id = {row["entity_id"]: row for row in result["created"]}
+    assert created_by_id["dest_viator_999"]["possible_duplicate_of"] == "dest_rome"
+    assert created_by_id["dest_viator_1000"]["possible_duplicate_of"] is None
+
+    pending = admin.pending_destinations(db)["pending"]
+    assert {row["entity_id"] for row in pending} == {"dest_viator_999", "dest_viator_1000"}
+    new_rome = db.scalar(select(Destination).where(Destination.entity_id == "dest_viator_999"))
+    assert new_rome.review_status == "pending_review"
+
+
+def test_admin_approve_reject_and_merge_destination(monkeypatch):
+    db = make_session()
+    seed(db)
+    monkeypatch.setattr("app.services.viator.ViatorClient", _FakeViatorClient)
+    admin.sync_viator_destinations(db)
+
+    approved = admin.approve_destination(db, "dest_viator_1000")
+    assert approved["review_status"] == "approved"
+
+    rejected = admin.reject_destination(db, "dest_viator_999")
+    assert rejected["review_status"] == "rejected"
+
+    ingestion.ingest_product(
+        db,
+        {
+            "entity_id": "prod_newtown_ticket",
+            "destination_entity_id": "dest_viator_1000",
+            "name": "Newtown Ticket",
+            "category_group": "02_tickets",
+            "source": "internal",
+            "title": "Newtown Ticket",
+            "description": "A ticket in Newtown.",
+            "highlights": [],
+            "images": [],
+            "options": [],
+            "inclusions": [],
+            "price": 10,
+            "currency": "EUR",
+        },
+    )
+
+    merged = admin.merge_destination(db, "dest_viator_1000", "dest_rome")
+    assert merged["errors"] == []
+    assert merged["products_reassigned"] == 1
+
+    moved_product = db.scalar(select(Product).where(Product.entity_id == "prod_newtown_ticket"))
+    assert moved_product.destination_entity_id == "dest_rome"
+    merged_destination = db.scalar(select(Destination).where(Destination.entity_id == "dest_viator_1000"))
+    assert merged_destination.review_status == "rejected"
+
+    actions = [entry["action"] for entry in audit.recent(db, limit=10)]
+    assert "destination_approve" in actions
+    assert "destination_reject" in actions
+    assert "destination_merge" in actions
+
+
+def test_admin_product_debug_and_content_similarity():
+    db = make_session()
+    seed(db)
+    model_c.bulk_auto_confirm(db)
+
+    debug = admin.product_debug(db, "prod_rome_ticket")
+    assert debug["diff_history"][0]["to_version"] == 1
+    assert debug["diff_history"][0]["severity"] == "MAJOR"
+
+    ingestion.ingest_product(
+        db,
+        {
+            "entity_id": "prod_rome_ticket",
+            "destination_entity_id": "dest_rome",
+            "name": "Rome Ticket",
+            "category_group": "02_tickets",
+            "source": "internal",
+            "title": "Rome Ticket",
+            "description": "A completely different revised description entirely for v2.",
+            "highlights": ["Entry", "Updated logistics"],
+            "images": ["ticket_v2.jpg"],
+            "options": [{"name": "Standard"}],
+            "inclusions": ["Ticket"],
+            "price": 55,
+            "currency": "EUR",
+            "rating": 4.9,
+            "review_count": 210,
+            "availability_slots": ["09:00"],
+        },
+    )
+    debug_v2 = admin.product_debug(db, "prod_rome_ticket")
+    assert len(debug_v2["diff_history"]) == 2
+
+    similarity = admin.content_similarity(db)
+    assert isinstance(similarity["items"], list)
+
+
+def test_admin_site_config_defaults_and_update():
+    db = make_session()
+
+    config = admin.site_config(db)
+    assert config["cookie_consent_enabled"] is True
+    assert len(config["header_nav_menu"]) == 5
+    assert set(config["footer_sections"].keys()) == {"About", "Explore", "Support", "Legal"}
+
+    result = admin.update_site_config(db, "cookie_consent_enabled", False)
+    assert result["errors"] == []
+
+    updated = admin.site_config(db)
+    assert updated["cookie_consent_enabled"] is False
+
+    entries = audit.recent(db, limit=5)
+    assert entries[0]["action"] == "site_config_update"
+
+
+def test_admin_update_site_config_rejects_unknown_key():
+    db = make_session()
+
+    result = admin.update_site_config(db, "not_a_real_key", "value")
+
+    assert result["errors"] == ["Unknown site-config key 'not_a_real_key'"]

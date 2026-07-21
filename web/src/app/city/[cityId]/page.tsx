@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { getCityPicks, getPublishedRecord } from "@/lib/api";
+import { BROWSER_API_BASE_URL, getCityPicks, getPublishedRecord } from "@/lib/api";
 import type { CityPick } from "@/lib/types";
 
 const SLOT_LABELS: Record<string, string> = {
@@ -61,8 +61,18 @@ export default async function CityPage({ params }: Props) {
         />
       )}
 
-      <section className="bg-gradient-to-br from-brand-primary to-brand-primary-dark py-12 text-white">
-        <div className="mx-auto max-w-6xl px-6">
+      <section
+        className="relative bg-gradient-to-br from-brand-primary to-brand-primary-dark bg-cover bg-center py-12 text-white"
+        style={
+          content?.hero_image?.url
+            ? { backgroundImage: `url(${BROWSER_API_BASE_URL}${content.hero_image.url})` }
+            : undefined
+        }
+      >
+        {content?.hero_image?.url && (
+          <div className="absolute inset-0 bg-brand-navy/60" aria-hidden="true" />
+        )}
+        <div className="relative mx-auto max-w-6xl px-6">
           <p className="text-sm text-white/70">
             <Link href="/" className="hover:underline">
               Home

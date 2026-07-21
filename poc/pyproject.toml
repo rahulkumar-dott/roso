@@ -13,6 +13,7 @@ dependencies = [
     "httpx",
     "sentence-transformers",
     "google-genai>=2.12.1",
+    "python-multipart",
 ]
 
 [dependency-groups]

@@ -31,6 +31,16 @@ export interface TopRegion {
   name: string;
 }
 
+export interface HeroImage {
+  url: string;
+  alt_text: string;
+  source_class: "A" | "B" | "C";
+  rights_status: string;
+  indexable: boolean;
+  generator: string;
+  generated_at: string;
+}
+
 export interface PublishedContent {
   h1: string;
   meta_title: string;
@@ -58,6 +68,7 @@ export interface PublishedContent {
   top_regions?: TopRegion[];
   top_city_names?: string[];
   top_pick_titles?: string[];
+  hero_image?: HeroImage | null;
 }
 
 export interface PublishedRecord {
@@ -72,6 +83,7 @@ export interface PublishedRecord {
   status: string;
   index_state?: "indexed" | "noindex";
   content_locks?: Record<string, { locked?: boolean; edited_by?: string; locked_at?: string }>;
+  content_candidates?: Record<string, { value: unknown; generated_at?: string }>;
 }
 
 export interface CityPick {
@@ -234,4 +246,104 @@ export interface AdminPublishingRow {
 
 export interface AdminPublishingResponse {
   records: AdminPublishingRow[];
+}
+
+// --- Module 2: Destination Governance ---------------------------------
+
+export interface AdminPendingDestinationRow {
+  entity_id: string;
+  name: string;
+  country: string;
+  region: string | null;
+  city: string | null;
+  destination_level: string;
+  source: string;
+  possible_duplicate_of: string | null;
+}
+
+export interface AdminPendingDestinationsResponse {
+  pending: AdminPendingDestinationRow[];
+}
+
+export interface AdminSyncViatorCreatedRow {
+  entity_id: string;
+  name: string;
+  country: string;
+  destination_level: string;
+  possible_duplicate_of: string | null;
+}
+
+export interface AdminSyncViatorResult {
+  synced: number;
+  skipped_existing: number;
+  total_seen: number;
+  created: AdminSyncViatorCreatedRow[];
+}
+
+export interface AdminDestinationActionResult {
+  errors: string[];
+  entity_id?: string;
+  review_status?: string;
+  canonical_entity_id?: string;
+  products_reassigned?: number;
+  attractions_reassigned?: number;
+}
+
+// --- Module 4: Product Ops Debugging Panel ------------------------------
+
+export interface AdminProductDiffEntry {
+  from_version: number;
+  to_version: number;
+  severity: string;
+  changed_domains: string[];
+  created_at: string;
+}
+
+export interface AdminProductLatestDraft {
+  version: number;
+  status: string;
+  validation_errors: string[];
+  similarity_band: string | null;
+  similarity: Record<string, unknown> | null;
+}
+
+export interface AdminProductDebug {
+  entity_id: string;
+  diff_history: AdminProductDiffEntry[];
+  latest_draft: AdminProductLatestDraft | null;
+}
+
+// --- Module 3: Canonical & Duplicate Inspector --------------------------
+
+export interface AdminSimilarityRow {
+  entity_id: string;
+  version: number;
+  band: string | null;
+  score: number | null;
+  nearest_entity_id: string | null;
+}
+
+export interface AdminSimilarityResponse {
+  items: AdminSimilarityRow[];
+}
+
+// --- Module 8: Global Components Admin (Site Config) --------------------
+
+export type AdminSiteConfigResponse = Record<string, unknown>;
+
+// --- Module 10: Audit Log ------------------------------------------------
+
+export interface AuditLogEntry {
+  id: number;
+  actor: string;
+  action: string;
+  entity_id: string;
+  field: string | null;
+  before_value: unknown;
+  after_value: unknown;
+  created_at: string;
+}
+
+export interface AuditLogResponse {
+  entries: AuditLogEntry[];
 }

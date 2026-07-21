@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.core.db import Base, engine, ensure_schema_compatibility
 from app.routers import (
@@ -49,6 +52,10 @@ app.include_router(decisions.router)
 app.include_router(publishing.router)
 app.include_router(llm_visibility.router)
 app.include_router(mcp.router)
+
+static_dir = Path(__file__).resolve().parent.parent / "static"
+static_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 @app.get("/health", tags=["health"])

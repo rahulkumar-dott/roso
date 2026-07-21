@@ -2,8 +2,8 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.db import Base
-from app.models.entities import DraftedContent, EnrichedFact, PublishedRecord
-from app.services import enrichment, ingestion, model_c, publisher
+from app.models.entities import Destination, DraftedContent, EnrichedFact, PublishedRecord
+from app.services import audit, enrichment, ingestion, model_c, publisher
 
 
 def make_session():
@@ -336,3 +336,177 @@ def test_publish_country_requires_stored_destination():
 
     assert result is None
     assert errors == ["Country 'Atlantis' has no stored destinations"]
+
+
+def test_publish_city_page_blocked_by_destination_activation_gate():
+    db = make_session()
+    ingestion.ingest_destination(
+        db,
+        {
+            "entity_id": "dest_newcity",
+            "name": "Newcity",
+            "country": "Italy",
+            "region": None,
+            "city": "Newcity",
+            "source": "viator",
+            "description": "A new city.",
+            "images": [],
+            "lat": 1.0,
+            "lng": 1.0,
+        },
+    )
+    destination = db.scalar(select(Destination).where(Destination.entity_id == "dest_newcity"))
+    destination.review_status = "pending_review"
+    db.commit()
+
+    result, errors = publisher.publish_city_page(db, "dest_newcity")
+    assert result is None
+    assert "not approved" in errors[0]
+
+    destination.review_status = "approved"
+    db.commit()
+
+    result, errors = publisher.publish_city_page(db, "dest_newcity")
+    assert result is None
+    assert "no linked products" in errors[0]
+
+    ingestion.ingest_product(
+        db,
+        {
+            "entity_id": "prod_newcity_ticket",
+            "destination_entity_id": "dest_newcity",
+            "name": "Newcity Ticket",
+            "category_group": "02_tickets",
+            "source": "internal",
+            "title": "Newcity Ticket",
+            "description": "A ticket in Newcity.",
+            "highlights": [],
+            "images": [],
+            "options": [],
+            "inclusions": [],
+            "price": 10,
+            "currency": "EUR",
+        },
+    )
+    model_c.recompute(db)
+
+    result, errors = publisher.publish_city_page(db, "dest_newcity")
+    assert errors == []
+    assert result["entity_type"] == "city"
+
+
+def test_existing_demo_style_destinations_are_unaffected_by_activation_gate():
+    """Model default review_status='approved' means any destination created
+    the way the existing demo dataset was (ingest_destination without setting
+    review_status) keeps publishing exactly as before."""
+    db = make_session()
+    ingest_city_and_products(db)
+
+    result, errors = publisher.publish_city_page(db, "dest_rome")
+    assert errors == []
+    assert result["entity_type"] == "city"
+
+    country_result, country_errors = publisher.publish_country_page(db, "Italy")
+    assert country_errors == []
+    assert country_result["content"]["top_cities"][0]["entity_id"] == "dest_rome"
+
+
+def test_regenerate_stores_candidate_without_overwriting_locked_value_then_accept():
+    db = make_session()
+    ingest_city_and_products(db)
+    publisher.publish_city_page(db, "dest_rome")
+
+    locked, errors = publisher.edit_published_content(
+        db,
+        "dest_rome",
+        updates={},
+        lock_fields=["overview"],
+        unlock_fields=[],
+        edited_by="editor",
+    )
+    assert errors == []
+    assert locked["content_locks"]["overview"]["locked"] is True
+    original_overview = locked["content"]["overview"]
+
+    regenerated, errors = publisher.regenerate_field(db, "dest_rome", "overview")
+    assert errors == []
+    assert regenerated["content"]["overview"] == original_overview
+    assert "overview" in regenerated["content_candidates"]
+
+    candidate_value = regenerated["content_candidates"]["overview"]["value"]
+    accepted, errors = publisher.accept_candidate(db, "dest_rome", "overview")
+    assert errors == []
+    assert accepted["content_candidates"] == {}
+    assert accepted["content"]["overview"] == candidate_value
+
+
+def test_reject_candidate_discards_without_changing_live_value():
+    db = make_session()
+    ingest_city_and_products(db)
+    publisher.publish_city_page(db, "dest_rome")
+
+    regenerated, errors = publisher.regenerate_field(db, "dest_rome", "highlights")
+    assert errors == []
+    assert "highlights" in regenerated["content_candidates"]
+    live_before = regenerated["content"]["highlights"]
+
+    rejected, errors = publisher.reject_candidate(db, "dest_rome", "highlights")
+    assert errors == []
+    assert rejected["content_candidates"] == {}
+    assert rejected["content"]["highlights"] == live_before
+
+
+def test_revert_restores_ai_value_and_clears_lock():
+    db = make_session()
+    ingest_city_and_products(db)
+    publisher.publish_city_page(db, "dest_rome")
+
+    edited, errors = publisher.edit_published_content(
+        db,
+        "dest_rome",
+        updates={"highlights": ["Manually overridden highlight"]},
+        lock_fields=[],
+        unlock_fields=[],
+        edited_by="editor",
+    )
+    assert errors == []
+    assert edited["content"]["highlights"] == ["Manually overridden highlight"]
+    assert edited["content_locks"]["highlights"]["locked"] is True
+
+    reverted, errors = publisher.revert_field(db, "dest_rome", "highlights")
+    assert errors == []
+    assert reverted["content"]["highlights"] != ["Manually overridden highlight"]
+    assert "highlights" not in reverted["content_locks"]
+
+
+def test_revert_requires_field_to_be_locked():
+    db = make_session()
+    ingest_city_and_products(db)
+    publisher.publish_city_page(db, "dest_rome")
+
+    result, errors = publisher.revert_field(db, "dest_rome", "highlights")
+
+    assert result is None
+    assert "not currently locked" in errors[0]
+
+
+def test_audit_log_records_lock_regenerate_accept_and_revert():
+    db = make_session()
+    ingest_city_and_products(db)
+    publisher.publish_city_page(db, "dest_rome")
+
+    publisher.edit_published_content(
+        db, "dest_rome", updates={}, lock_fields=["overview"], unlock_fields=[], edited_by="editor"
+    )
+    publisher.regenerate_field(db, "dest_rome", "overview")
+    publisher.accept_candidate(db, "dest_rome", "overview")
+    publisher.edit_published_content(
+        db, "dest_rome", updates={"body": "manual body"}, lock_fields=[], unlock_fields=[], edited_by="editor"
+    )
+    publisher.revert_field(db, "dest_rome", "body")
+
+    actions = [entry["action"] for entry in audit.recent(db, limit=20)]
+    assert "content_lock" in actions
+    assert "regenerate" in actions
+    assert "candidate_accept" in actions
+    assert "revert" in actions

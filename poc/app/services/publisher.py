@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.entities import (
@@ -12,7 +12,7 @@ from app.models.entities import (
     PublishedRecord,
     RawVersion,
 )
-from app.services import drafting, model_c, schema_builder
+from app.services import audit, drafting, image_gen, model_c, schema_builder
 from app.services.enrichment import find_entity, get_facts
 
 
@@ -96,6 +96,7 @@ def _record_out(record: PublishedRecord) -> dict[str, Any]:
         "status": record.status,
         "index_state": _effective_index_state(record),
         "content_locks": record.content_locks or {},
+        "content_candidates": record.content_candidates or {},
     }
 
 
@@ -333,6 +334,7 @@ def _city_content_snapshot(
     db: Session,
     destination: Destination,
     canonical: str,
+    existing_content: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     city_name = destination.city or destination.name
     country_name = destination.country
@@ -391,9 +393,40 @@ def _city_content_snapshot(
         "faq": _city_faq(city_name, country_name, facts, _city_food_pick_title(picks)),
         "model_c": picks,
         "top_pick_titles": pick_titles,
+        # WBS City_Page: hero image source is "CMS media for the city" - a
+        # real uploaded photo, never AI-generated. Carried forward the same
+        # way as the country hero image, never recomputed by this snapshot.
+        "hero_image": (existing_content or {}).get("hero_image"),
         "page_type": "city",
     }
     return content, picks
+
+
+def destination_activation_error(db: Session, destination: Destination) -> str | None:
+    """SOW System 1.1 activation gate: 'a destination becomes active once at
+    least one product is linked to it', plus Module 2's added human-approval
+    requirement. A destination is publishable only once BOTH conditions hold.
+
+    Pre-existing/internal/demo-seeded destinations were migrated (or default)
+    to review_status='approved', so this only blocks newly Viator-synced
+    destinations that haven't been approved yet, or approved destinations
+    with zero linked products - it does not retroactively break already
+    -published demo city/country pages.
+    """
+    review_status = getattr(destination, "review_status", "approved") or "approved"
+    if review_status != "approved":
+        return (
+            f"Destination '{destination.entity_id}' is not approved for publishing "
+            f"(review_status='{review_status}')"
+        )
+    products_count = db.scalar(
+        select(func.count())
+        .select_from(Product)
+        .where(Product.destination_entity_id == destination.entity_id)
+    )
+    if not products_count:
+        return f"Destination '{destination.entity_id}' has no linked products and cannot be published"
+    return None
 
 
 def _country_destinations(db: Session, country: str) -> list[Destination]:
@@ -484,9 +517,18 @@ def _country_content_snapshot(
     db: Session,
     country: str,
     canonical: str,
+    existing_content: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     destinations = _country_destinations(db, country)
-    cities = [d for d in destinations if d.destination_level in CITY_LEVELS]
+    # Module 2 activation gate, applied to which cities surface on the country
+    # page: only approved + product-linked destinations are eligible. Existing
+    # demo cities pass this already (review_status='approved' by default plus
+    # linked products), so this doesn't change today's published country pages.
+    cities = [
+        d
+        for d in destinations
+        if d.destination_level in CITY_LEVELS and destination_activation_error(db, d) is None
+    ]
     regions = [d for d in destinations if d.destination_level == "REGION"]
     rollup = model_c.country_rollup(db, country)
     facts = _country_facts(db, destinations)
@@ -548,6 +590,11 @@ def _country_content_snapshot(
             for dest in regions[:12]
         ],
         "top_city_names": [dest.city or dest.name for dest in cities[:6]],
+        # WBS: "no curated image exists for countries" -> Nano Banana Pro
+        # generated. Never regenerated as a side effect of a cheap snapshot
+        # rebuild (every content edit republishes) - only carried forward
+        # from whatever was last generated/accepted. See regenerate_hero_image().
+        "hero_image": (existing_content or {}).get("hero_image"),
         "page_type": "country",
     }
     return content, rollup
@@ -681,12 +728,18 @@ def publish_city_page(db: Session, city_id: str) -> tuple[dict[str, Any] | None,
     if destination is None:
         return None, [f"City destination '{city_id}' not found"]
 
+    gate_error = destination_activation_error(db, destination)
+    if gate_error:
+        return None, [gate_error]
+
     canonical = schema_builder.canonical_url("city", destination)
-    content, model_snapshot = _city_content_snapshot(db, destination, canonical)
+    existing = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == city_id))
+    content, model_snapshot = _city_content_snapshot(
+        db, destination, canonical, existing_content=existing.content if existing else None
+    )
     facts_payload = get_facts(db, city_id)
     facts = facts_payload["resolved_fields"] if facts_payload else {}
     source_facts = schema_builder.factual_sources(db, city_id)
-    existing = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == city_id))
     content = _apply_content_locks(content, existing)
     existing_schema_id = _existing_schema_entity_id(existing)
     schema_json = schema_builder.build_schema(
@@ -728,8 +781,42 @@ def publish_country_page(db: Session, country: str) -> tuple[dict[str, Any] | No
     normalized_country = destinations[0].country
     entity_id = f"country_{schema_builder.slugify(normalized_country)}"
     canonical = schema_builder.country_canonical_url(normalized_country)
-    content, model_snapshot = _country_content_snapshot(db, normalized_country, canonical)
     existing = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
+    content, model_snapshot = _country_content_snapshot(
+        db, normalized_country, canonical, existing_content=existing.content if existing else None
+    )
+    if content.get("hero_image") is None:
+        # WBS: hero image ownership is "AI + manual", same as h1/overview -
+        # auto-generate once on first publish, same as every other AI field.
+        # Never regenerated automatically again after that (see
+        # _country_content_snapshot's carry-forward comment) - only via the
+        # explicit admin "Regenerate hero image" action from here on.
+        asset, error = image_gen.generate_country_hero_image(normalized_country)
+        if asset:
+            content["hero_image"] = asset
+            audit.log(
+                db,
+                action="regenerate",
+                entity_id=entity_id,
+                field="hero_image",
+                before=None,
+                after=asset,
+                actor="system_auto_publish",
+            )
+        elif error:
+            # Publish must not fail just because the hero image couldn't be
+            # made (e.g. not configured, transient API error) - but the
+            # failure still needs to be visible somewhere, or an admin has no
+            # way to know a country is silently missing its hero image.
+            audit.log(
+                db,
+                action="regenerate_failed",
+                entity_id=entity_id,
+                field="hero_image",
+                before=None,
+                after=error,
+                actor="system_auto_publish",
+            )
     content = _apply_content_locks(content, existing)
     schema_json = schema_builder.build_schema(
         db,
@@ -777,6 +864,13 @@ def promote_country_page(db: Session, country: str) -> tuple[dict[str, Any] | No
     content["country_index_promoted"] = True
     record.content = content
     record.index_state = "indexed"
+    audit.log(
+        db,
+        action="country_promote",
+        entity_id=entity_id,
+        before={"index_state": "noindex"},
+        after={"index_state": "indexed"},
+    )
     db.commit()
     return _record_out(record), []
 
@@ -822,10 +916,14 @@ def edit_published_content(
         "body",
         "about_rosotravel",
         "highlights",
+        "facts",
         "faq",
         "local_tips",
         "top_city_names",
         "top_pick_titles",
+        "top_regions",
+        "top_cities",
+        "hero_image",
     }
     unknown_fields = sorted(set(updates) - allowed_fields)
     if unknown_fields:
@@ -833,6 +931,7 @@ def edit_published_content(
 
     now = _utcnow()
     for field, value in updates.items():
+        before_value = content.get(field)
         content[field] = value
         locks[field] = {
             "locked": True,
@@ -840,6 +939,15 @@ def edit_published_content(
             "locked_at": now.isoformat(),
             "reason": "manual_cms_edit",
         }
+        audit.log(
+            db,
+            action="content_lock",
+            entity_id=entity_id,
+            field=field,
+            before=before_value,
+            after=value,
+            actor=edited_by or "admin",
+        )
     for field in lock_fields:
         if field in content:
             locks[field] = {
@@ -848,8 +956,26 @@ def edit_published_content(
                 "locked_at": now.isoformat(),
                 "reason": "manual_lock",
             }
+            audit.log(
+                db,
+                action="content_lock",
+                entity_id=entity_id,
+                field=field,
+                before=content.get(field),
+                after=content.get(field),
+                actor=edited_by or "admin",
+            )
     for field in unlock_fields:
-        locks.pop(field, None)
+        if locks.pop(field, None) is not None:
+            audit.log(
+                db,
+                action="content_unlock",
+                entity_id=entity_id,
+                field=field,
+                before=content.get(field),
+                after=content.get(field),
+                actor=edited_by or "admin",
+            )
 
     entity, facts, source_facts, model_snapshot = _schema_context_for_record(db, record)
     if entity is not None:
@@ -876,6 +1002,310 @@ def edit_published_content(
     record.content = content
     record.content_locks = locks
     record.date_modified = now
+    db.commit()
+    return _record_out(record), []
+
+
+def _fresh_content_for_record(db: Session, record: PublishedRecord) -> dict[str, Any] | None:
+    """Recompute this record's full content snapshot from current source data,
+    ignoring any existing content_locks - i.e. what the AI pipeline would
+    produce right now if nothing were locked. This is the single definition
+    of "latest AI-generated version" shared by both regenerate-as-candidate
+    and revert, so the two actions can't drift out of sync with each other.
+    """
+    if record.entity_type == "country":
+        country_name = record.content.get("country_name") or record.entity_id.removeprefix(
+            "country_"
+        ).replace("-", " ")
+        destinations = _country_destinations(db, country_name)
+        if not destinations:
+            return None
+        content, _ = _country_content_snapshot(
+            db, destinations[0].country, record.canonical_url, existing_content=record.content
+        )
+        return content
+    if record.entity_type == "city":
+        destination = db.scalar(select(Destination).where(Destination.entity_id == record.entity_id))
+        if destination is None:
+            return None
+        content, _ = _city_content_snapshot(
+            db, destination, record.canonical_url, existing_content=record.content
+        )
+        return content
+
+    # product / attraction / destination-node entity types published via
+    # publish_entity() - freshest content is the latest validated draft.
+    draft = _latest_validated_content(db, record.entity_id)
+    if draft is None:
+        return None
+    content = _content_snapshot(db, draft, record.canonical_url)
+    found = find_entity(db, record.entity_id)
+    if found is not None:
+        entity_type, entity = found
+        model_snapshot = _model_c_snapshot(db, entity_type, entity)
+        if model_snapshot:
+            content["model_c"] = model_snapshot
+    return content
+
+
+def _revalidate_and_save(
+    db: Session,
+    record: PublishedRecord,
+    content: dict[str, Any],
+    locks: dict[str, Any],
+) -> list[str]:
+    """Shared schema rebuild/validate/save step used by accept_candidate and
+    revert_field (edit_published_content keeps its own inline copy to avoid
+    touching well-covered existing behavior)."""
+    entity, facts, source_facts, model_snapshot = _schema_context_for_record(db, record)
+    if entity is not None:
+        schema_json = schema_builder.build_schema(
+            db,
+            entity_id=record.entity_id,
+            entity_type=record.entity_type,
+            entity=entity,
+            content=content,
+            facts=facts,
+            model_c_snapshot=model_snapshot,
+            existing_schema_id=_existing_schema_entity_id(record),
+        )
+        errors = schema_builder.validate(
+            schema_json=schema_json,
+            content=content,
+            facts=facts,
+            source_facts=source_facts,
+        )
+        if errors:
+            return errors
+        record.schema_json = schema_json
+    record.content = content
+    record.content_locks = locks
+    record.date_modified = _utcnow()
+    return []
+
+
+def regenerate_field(
+    db: Session,
+    entity_id: str,
+    field: str,
+    actor: str = "admin_poc",
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Module 1: a regenerate trigger produces a new AI draft stored as a
+    CANDIDATE - it never overwrites the live content[field], locked or not.
+    """
+    record = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
+    if record is None:
+        return None, [f"Published record '{entity_id}' not found"]
+
+    fresh = _fresh_content_for_record(db, record)
+    if fresh is None or field not in fresh:
+        return None, [f"Cannot regenerate field '{field}' for '{entity_id}'"]
+
+    candidates = dict(record.content_candidates or {})
+    candidates[field] = {"value": fresh[field], "generated_at": _utcnow().isoformat()}
+    record.content_candidates = candidates
+    audit.log(
+        db,
+        action="regenerate",
+        entity_id=entity_id,
+        field=field,
+        before=(record.content or {}).get(field),
+        after=fresh[field],
+        actor=actor,
+    )
+    db.commit()
+    return _record_out(record), []
+
+
+def regenerate_hero_image(
+    db: Session,
+    entity_id: str,
+    actor: str = "admin_poc",
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Country-only. Unlike regenerate_field, this can't be produced by the
+    cheap _fresh_content_for_record recompute - it's a real Nano Banana Pro
+    call (WBS: "no curated image exists for countries"). Stored as a
+    candidate through the same content_candidates mechanism as every other
+    field, so accept_candidate/reject_candidate already work on it unchanged.
+    """
+    record = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
+    if record is None:
+        return None, [f"Published record '{entity_id}' not found"]
+    if record.entity_type != "country":
+        return None, ["Hero image generation is only defined for country pages (WBS Country_Page spec)"]
+
+    country_name = record.content.get("country_name") or entity_id.removeprefix("country_").replace("-", " ")
+    asset, error = image_gen.generate_country_hero_image(country_name)
+    if error:
+        return None, [error]
+
+    candidates = dict(record.content_candidates or {})
+    candidates["hero_image"] = {"value": asset, "generated_at": asset["generated_at"]}
+    record.content_candidates = candidates
+    audit.log(
+        db,
+        action="regenerate",
+        entity_id=entity_id,
+        field="hero_image",
+        before=(record.content or {}).get("hero_image"),
+        after=asset,
+        actor=actor,
+    )
+    db.commit()
+    return _record_out(record), []
+
+
+def upload_hero_image(
+    db: Session,
+    entity_id: str,
+    file_bytes: bytes,
+    content_type: str,
+    actor: str = "admin_poc",
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Country or city. WBS City_Page: hero image source is "CMS media for
+    the city" - a real photo, never AI-generated - so city can only ever get
+    a hero image through this path. Country can also use this as a manual
+    override of the Nano-Banana output. Sets the value and locks it directly
+    (no candidate/accept step) - a human explicitly chose this file, there's
+    no AI draft to review against.
+    """
+    record = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
+    if record is None:
+        return None, [f"Published record '{entity_id}' not found"]
+    if record.entity_type not in ("country", "city"):
+        return None, ["Hero image upload is only defined for country and city pages"]
+
+    entity_name = (
+        record.content.get("city_name")
+        or record.content.get("country_name")
+        or entity_id
+    )
+    asset, error = image_gen.save_uploaded_hero_image(entity_name, file_bytes, content_type)
+    if error:
+        return None, [error]
+
+    return edit_published_content(
+        db,
+        entity_id,
+        updates={"hero_image": asset},
+        lock_fields=[],
+        unlock_fields=[],
+        edited_by=actor,
+    )
+
+
+def accept_candidate(
+    db: Session,
+    entity_id: str,
+    field: str,
+    actor: str = "admin_poc",
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Module 1: moves a staged candidate into the live content[field]."""
+    record = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
+    if record is None:
+        return None, [f"Published record '{entity_id}' not found"]
+
+    candidates = dict(record.content_candidates or {})
+    candidate = candidates.get(field)
+    if candidate is None:
+        return None, [f"No pending candidate for field '{field}' on '{entity_id}'"]
+
+    content = dict(record.content or {})
+    before_value = content.get(field)
+    content[field] = candidate["value"]
+
+    errors = _revalidate_and_save(db, record, content, dict(record.content_locks or {}))
+    if errors:
+        return None, errors
+
+    candidates.pop(field, None)
+    record.content_candidates = candidates
+    audit.log(
+        db,
+        action="candidate_accept",
+        entity_id=entity_id,
+        field=field,
+        before=before_value,
+        after=candidate["value"],
+        actor=actor,
+    )
+    db.commit()
+    return _record_out(record), []
+
+
+def reject_candidate(
+    db: Session,
+    entity_id: str,
+    field: str,
+    actor: str = "admin_poc",
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Module 1: discards a staged candidate without touching live content."""
+    record = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
+    if record is None:
+        return None, [f"Published record '{entity_id}' not found"]
+
+    candidates = dict(record.content_candidates or {})
+    if field not in candidates:
+        return None, [f"No pending candidate for field '{field}' on '{entity_id}'"]
+
+    discarded = candidates.pop(field)
+    record.content_candidates = candidates
+    audit.log(
+        db,
+        action="candidate_reject",
+        entity_id=entity_id,
+        field=field,
+        before=discarded.get("value"),
+        after=None,
+        actor=actor,
+    )
+    db.commit()
+    return _record_out(record), []
+
+
+def revert_field(
+    db: Session,
+    entity_id: str,
+    field: str,
+    actor: str = "admin_poc",
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Module 1: restores a locked field to the most recent underlying
+    AI-generated version and clears the manual lock - distinct from a plain
+    unlock, which leaves the value untouched.
+    """
+    record = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
+    if record is None:
+        return None, [f"Published record '{entity_id}' not found"]
+
+    locks = dict(record.content_locks or {})
+    if not (isinstance(locks.get(field), dict) and locks[field].get("locked")):
+        return None, [f"Field '{field}' is not currently locked; nothing to revert"]
+
+    fresh = _fresh_content_for_record(db, record)
+    if fresh is None or field not in fresh:
+        return None, [f"Cannot revert field '{field}' for '{entity_id}'"]
+
+    content = dict(record.content or {})
+    before_value = content.get(field)
+    content[field] = fresh[field]
+    locks.pop(field, None)
+
+    errors = _revalidate_and_save(db, record, content, locks)
+    if errors:
+        return None, errors
+
+    candidates = dict(record.content_candidates or {})
+    candidates.pop(field, None)
+    record.content_candidates = candidates
+    audit.log(
+        db,
+        action="revert",
+        entity_id=entity_id,
+        field=field,
+        before=before_value,
+        after=fresh[field],
+        actor=actor,
+    )
     db.commit()
     return _record_out(record), []
 

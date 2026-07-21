@@ -18,12 +18,28 @@ class Base(DeclarativeBase):
 
 def ensure_schema_compatibility() -> None:
     inspector = inspect(engine)
-    if "published_records" not in inspector.get_table_names():
-        return
-    columns = {column["name"] for column in inspector.get_columns("published_records")}
-    if "content_locks" not in columns:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE published_records ADD COLUMN content_locks JSON DEFAULT '{}'"))
+    table_names = inspector.get_table_names()
+
+    if "published_records" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("published_records")}
+        if "content_locks" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE published_records ADD COLUMN content_locks JSON DEFAULT '{}'"))
+        if "content_candidates" not in columns:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE published_records ADD COLUMN content_candidates JSON DEFAULT '{}'")
+                )
+
+    if "destinations" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("destinations")}
+        if "review_status" not in columns:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE destinations ADD COLUMN review_status VARCHAR NOT NULL DEFAULT 'approved'"
+                    )
+                )
 
 
 def get_db() -> Generator[Session, None, None]:
