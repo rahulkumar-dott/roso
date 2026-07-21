@@ -136,6 +136,11 @@ class RevertFieldRequest(BaseModel):
     field: str
 
 
+class QaSampleReviewRequest(BaseModel):
+    decision: str
+    notes: str | None = None
+
+
 class AttractionCreateRequest(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     destination_entity_id: str | None = None
@@ -281,6 +286,7 @@ class PublishOut(BaseModel):
     index_state: str = "indexed"
     content_locks: dict[str, Any] = Field(default_factory=dict)
     content_candidates: dict[str, Any] = Field(default_factory=dict)
+    pending_batch: dict[str, Any] | None = None
 
 
 class PublishedContentEditRequest(BaseModel):

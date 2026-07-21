@@ -2,6 +2,8 @@ import Link from "next/link";
 
 const ADMIN_TABS = [
   { href: "/admin", label: "Overview" },
+  { href: "/admin/countries", label: "Countries" },
+  { href: "/admin/cities", label: "Cities" },
   { href: "/admin/destinations", label: "Destinations" },
   { href: "/admin/products", label: "Products / Model C" },
   { href: "/admin/content", label: "Content & Publishing" },

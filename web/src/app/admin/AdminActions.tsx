@@ -814,6 +814,256 @@ export function HeroImageForm({
   );
 }
 
+export type BatchPage = { entity_id: string; page_type: "product"; name: string };
+
+export type PendingBatch = {
+  pages: BatchPage[];
+  sampled_entity_ids: string[];
+  status: string;
+  created_at: string;
+};
+
+type PagePreview = {
+  h1?: string;
+  meta_title?: string;
+  meta_description?: string;
+  overview?: string;
+  body?: string;
+  highlights?: string[];
+  faq?: { question: string; answer: string }[];
+};
+
+function SampledPageReview({ page }: { page: BatchPage }) {
+  const [preview, setPreview] = useState<PagePreview | null>(null);
+  const [usedFallback, setUsedFallback] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function load() {
+    setLoading(true);
+    setError("");
+    try {
+      const draftResponse = await fetch(`${BROWSER_API_BASE_URL}/entities/${page.entity_id}/content`);
+      if (draftResponse.ok) {
+        setPreview((await draftResponse.json()) as PagePreview);
+        return;
+      }
+      // No new draft ready for this product yet (no MAJOR diff pending, per
+      // the Diff Engine's hard rule) - fall back to what's currently live,
+      // since that's what Pass would leave unchanged for this page anyway.
+      const liveResponse = await fetch(`${BROWSER_API_BASE_URL}/published/${page.entity_id}`);
+      if (liveResponse.ok) {
+        const record = (await liveResponse.json()) as { content: PagePreview };
+        setPreview(record.content);
+        setUsedFallback(true);
+        return;
+      }
+      // No draft and no individual publish record for this product - it has
+      // nothing to preview, and Pass will simply leave it untouched (it's
+      // only referenced today via the city's Model C picks).
+      setError(
+        "No content to preview - this page has no AI draft and isn't individually published yet. " +
+          "Pass will leave it unchanged.",
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Request failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 rounded-md border border-amber-100 bg-white p-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-slate-600">
+          {page.name} <span className="text-slate-400">({page.page_type})</span>
+        </p>
+        {!preview && (
+          <button
+            type="button"
+            onClick={load}
+            disabled={loading}
+            className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+          >
+            {loading ? "Loading..." : "View proposed content"}
+          </button>
+        )}
+      </div>
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+      {preview && usedFallback && (
+        <p className="mt-1 text-[11px] text-slate-400">
+          No new AI draft pending for this page (no MAJOR change detected) - showing current live
+          content, which is what Pass would leave unchanged.
+        </p>
+      )}
+      {preview && (
+        <div className="mt-2 space-y-1 text-xs text-slate-600">
+          {preview.h1 && (
+            <p>
+              <span className="font-medium text-slate-500">H1:</span> {preview.h1}
+            </p>
+          )}
+          {preview.meta_title && (
+            <p>
+              <span className="font-medium text-slate-500">Meta title:</span> {preview.meta_title}
+            </p>
+          )}
+          {(preview.overview || preview.body) && (
+            <p>
+              <span className="font-medium text-slate-500">Body:</span>{" "}
+              {(preview.overview || preview.body || "").slice(0, 220)}
+            </p>
+          )}
+          {preview.faq && preview.faq.length > 0 && (
+            <p>
+              <span className="font-medium text-slate-500">FAQ:</span> {preview.faq.length} questions - e.g. &quot;
+              {preview.faq[0].question}&quot;
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function QaBatchForm({
+  entityId,
+  pendingBatch: initialPendingBatch,
+}: {
+  entityId: string;
+  liveContent?: Record<string, unknown>;
+  pendingBatch?: PendingBatch | null;
+}) {
+  const [pendingBatch, setPendingBatch] = useState<PendingBatch | null | undefined>(initialPendingBatch);
+  const [notes, setNotes] = useState("");
+  const [message, setMessage] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  function post(path: string, body?: Record<string, unknown>) {
+    return fetch(`${BROWSER_API_BASE_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  function runBatch() {
+    setMessage("");
+    startTransition(async () => {
+      try {
+        const response = await post(`/cities/${entityId}/batch/run`);
+        if (!response.ok) {
+          const text = await response.text();
+          setMessage(`Failed ${response.status}: ${text.slice(0, 200)}`);
+          return;
+        }
+        const data = (await response.json()) as { pending_batch: PendingBatch | null };
+        setPendingBatch(data.pending_batch);
+        setMessage(
+          data.pending_batch
+            ? `Batch run: ${data.pending_batch.pages.length} page(s) in this batch, ${data.pending_batch.sampled_entity_ids.length} sampled for review below.`
+            : "Batch run, but no sample was returned - try again.",
+        );
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Request failed");
+      }
+    });
+  }
+
+  function review(decision: "pass" | "fail") {
+    setMessage("");
+    startTransition(async () => {
+      try {
+        const response = await post(`/cities/${entityId}/batch/review`, {
+          decision,
+          notes: notes.trim() || undefined,
+        });
+        if (!response.ok) {
+          const text = await response.text();
+          setMessage(`Failed ${response.status}: ${text.slice(0, 200)}`);
+          return;
+        }
+        setNotes("");
+        setPendingBatch(null);
+        setMessage(
+          decision === "pass"
+            ? "Sample passed - every product page in the batch is now live. Refresh to see updates above."
+            : "Sample failed - batch discarded, nothing published.",
+        );
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Request failed");
+      }
+    });
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-slate-200 bg-white p-3">
+      <p className="text-xs font-semibold text-brand-navy">Run AI Batch (Human QA Sampling)</p>
+      <p className="mt-1 text-[11px] text-slate-400">
+        SOW 2.11 / Pipeline View batch model: a batch is every product page linked to this city
+        (the city page itself has its own separate lock/edit governance below). 3-5% of the
+        product pages are sampled for manual review; pass/fail applies to the whole batch
+        together.
+      </p>
+      {!pendingBatch ? (
+        <button
+          type="button"
+          onClick={runBatch}
+          disabled={isPending}
+          className="mt-3 rounded-md border border-brand-primary px-3 py-2 text-xs font-semibold text-brand-primary transition hover:bg-brand-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isPending ? "Running..." : "Run AI Batch"}
+        </button>
+      ) : (
+        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+          <p className="text-xs font-semibold text-amber-800">
+            Batch: {pendingBatch.pages.length} product page(s) - {pendingBatch.sampled_entity_ids.length}{" "}
+            sampled for QA review
+          </p>
+          {pendingBatch.pages
+            .filter((page) => pendingBatch.sampled_entity_ids.includes(page.entity_id))
+            .map((page) => (
+              <SampledPageReview key={page.entity_id} page={page} />
+            ))}
+          <p className="mt-2 text-[11px] text-slate-500">
+            Not sampled ({pendingBatch.pages.length - pendingBatch.sampled_entity_ids.length}):{" "}
+            {pendingBatch.pages
+              .filter((page) => !pendingBatch.sampled_entity_ids.includes(page.entity_id))
+              .map((page) => page.name)
+              .join(", ") || "none"}
+          </p>
+          <textarea
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+            placeholder="Notes (optional, useful on fail)"
+            rows={2}
+            className="mt-2 w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs text-brand-navy outline-none focus:border-brand-primary"
+          />
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => review("pass")}
+              disabled={isPending}
+              className="rounded-md bg-brand-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Pass - publish full batch
+            </button>
+            <button
+              type="button"
+              onClick={() => review("fail")}
+              disabled={isPending}
+              className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Fail - discard batch
+            </button>
+          </div>
+        </div>
+      )}
+      {message && <p className="mt-2 text-xs text-slate-500">{message}</p>}
+    </div>
+  );
+}
+
 export function ProductDebugPanel({ entityId }: { entityId: string }) {
   const [expanded, setExpanded] = useState(false);
   const [debugData, setDebugData] = useState<AdminProductDebug | null>(null);

@@ -32,16 +32,64 @@ def _slugify(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
 
-def _prompt_for_country(country_name: str) -> str:
+def _prompt_for_country(
+    country_name: str,
+    top_cities: list[str] | None = None,
+    top_attractions: list[str] | None = None,
+) -> str:
+    # City names alone let the model fall back on its own strong default
+    # association for well-known places (e.g. "Rome" alone already tends to
+    # surface the Colosseum, proven in earlier testing) - specific attraction
+    # names add real, review-verified options without forcing the model away
+    # from a better default it already has. Offer both together rather than
+    # either/or (SOW/WBS give no guidance on prompt content either way - this
+    # grounding is our own engineering call, not a doc requirement).
+    city_part = f"one of these cities: {', '.join(top_cities[:3])}" if top_cities else ""
+    attraction_part = (
+        f"one of these specific real landmarks: {', '.join(top_attractions[:3])}" if top_attractions else ""
+    )
+    if city_part and attraction_part:
+        anchor_clause = (
+            f" Show an iconic, instantly recognisable real-world view - either {city_part}, "
+            f"or {attraction_part}, whichever makes the strongest single image."
+        )
+    elif city_part:
+        anchor_clause = f" Show an iconic, instantly recognisable real-world view associated with {city_part}."
+    elif attraction_part:
+        anchor_clause = f" Show a real-world view of {attraction_part}."
+    else:
+        anchor_clause = " Show an iconic, instantly recognisable real-world view of the country."
+
     return (
-        f"A wide, photorealistic travel hero banner representing {country_name} - an "
-        "iconic, instantly recognisable real-world view of the country at golden hour, "
-        "warm natural light, travel-brochure quality, no people close to camera, no text "
-        "or logo overlays, landscape orientation suitable for a website hero background."
+        f"A wide, photorealistic travel hero banner representing {country_name}."
+        f"{anchor_clause} Pick a single representative scene - do not combine multiple "
+        "locations in one image. Golden hour, warm natural light, travel-brochure "
+        "quality, no people close to camera, no text or logo overlays, landscape "
+        "orientation suitable for a website hero background.\n\n"
+        "After generating the image, on its own line, output exactly:\n"
+        "ALT_TEXT: <one factual sentence describing exactly what is shown in the image, "
+        "for screen-reader accessibility>"
     )
 
 
-def generate_country_hero_image(country_name: str) -> tuple[dict[str, Any] | None, str | None]:
+def _extract_alt_text(parts: list[Any], fallback: str) -> str:
+    for part in parts:
+        text = getattr(part, "text", None)
+        if not text:
+            continue
+        for line in text.splitlines():
+            if line.strip().upper().startswith("ALT_TEXT:"):
+                candidate = line.split(":", 1)[1].strip()
+                if candidate:
+                    return candidate
+    return fallback
+
+
+def generate_country_hero_image(
+    country_name: str,
+    top_cities: list[str] | None = None,
+    top_attractions: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
     """Returns (asset_dict, error). asset_dict is None iff error is set."""
     settings = get_settings()
     if settings.image_generation_stub:
@@ -64,7 +112,7 @@ def generate_country_hero_image(country_name: str) -> tuple[dict[str, Any] | Non
         )
         response = client.models.generate_content(
             model=IMAGE_MODEL,
-            contents=_prompt_for_country(country_name),
+            contents=_prompt_for_country(country_name, top_cities, top_attractions),
             config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
         )
     except Exception as exc:  # noqa: BLE001 - surfaced to the admin UI as a plain message
@@ -84,9 +132,13 @@ def generate_country_hero_image(country_name: str) -> tuple[dict[str, Any] | Non
     out_path = STATIC_DIR / filename
     out_path.write_bytes(image_part.inline_data.data)
 
+    default_alt_text = f"{country_name} - Rosotravel destination hero image"
     asset = {
         "url": f"/static/hero_images/{filename}",
-        "alt_text": f"{country_name} - Rosotravel destination hero image",
+        # WBS "Alt text generated automatically by Run SEO Auto" - parsed from
+        # the model's own ALT_TEXT: line, falling back to the plain template
+        # only if the model didn't produce one.
+        "alt_text": _extract_alt_text(candidate.content.parts, default_alt_text),
         "source_class": "A",
         "rights_status": "owned",
         "indexable": True,

@@ -89,6 +89,8 @@ def _get_or_create_attraction(db: Session, payload: dict[str, Any]) -> Attractio
             city=payload.get("city"),
             source=payload.get("source", "internal"),
             status="inactive",
+            rating=payload.get("rating"),
+            review_count=payload.get("review_count"),
         )
         db.add(attraction)
     else:
@@ -97,6 +99,10 @@ def _get_or_create_attraction(db: Session, payload: dict[str, Any]) -> Attractio
         attraction.city = payload.get("city")
         if payload.get("destination_entity_id"):
             attraction.destination_entity_id = payload["destination_entity_id"]
+        if payload.get("rating") is not None:
+            attraction.rating = payload["rating"]
+        if payload.get("review_count") is not None:
+            attraction.review_count = payload["review_count"]
     db.flush()
     return attraction
 

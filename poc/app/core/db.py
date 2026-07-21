@@ -30,6 +30,9 @@ def ensure_schema_compatibility() -> None:
                 conn.execute(
                     text("ALTER TABLE published_records ADD COLUMN content_candidates JSON DEFAULT '{}'")
                 )
+        if "pending_batch" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE published_records ADD COLUMN pending_batch JSON"))
 
     if "destinations" in table_names:
         columns = {column["name"] for column in inspector.get_columns("destinations")}
@@ -40,6 +43,15 @@ def ensure_schema_compatibility() -> None:
                         "ALTER TABLE destinations ADD COLUMN review_status VARCHAR NOT NULL DEFAULT 'approved'"
                     )
                 )
+
+    if "attractions" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("attractions")}
+        if "rating" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE attractions ADD COLUMN rating DOUBLE PRECISION"))
+        if "review_count" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE attractions ADD COLUMN review_count INTEGER"))
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -73,6 +73,11 @@ class Attraction(Base):
     city: Mapped[str | None] = mapped_column(String, nullable=True)
     source: Mapped[str] = mapped_column(String, default="internal")
     status: Mapped[str] = mapped_column(String, default="inactive")
+    # Real Viator signal (rating/reviews), promoted out of the raw ingestion
+    # payload into queryable columns - used to rank "top attractions" for the
+    # country hero image prompt by actual popularity, not insertion order.
+    rating: Mapped[float | None] = mapped_column(nullable=True)
+    review_count: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
@@ -229,6 +234,11 @@ class PublishedRecord(Base):
     # noindex,follow until a human manually promotes them; other entity
     # types have no such gate and are always "indexed".
     index_state: Mapped[str] = mapped_column(String, default="indexed")  # indexed | noindex
+    # Phase 10 (SOW 2.11 Human QA Sampling): a freshly-computed "Run AI Batch"
+    # snapshot awaiting a 3-5% human sample review before it can go live.
+    # None when no batch is pending. Never touched by the regular publish
+    # endpoints - only by run_ai_batch()/review_qa_sample().
+    pending_batch: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
 class AuditLog(Base):

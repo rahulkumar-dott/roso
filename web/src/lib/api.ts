@@ -82,6 +82,7 @@ export function getAdminSiteConfig() {
   return apiGet<AdminSiteConfigResponse>("/admin/site-config");
 }
 
-export function getAuditLog(limit = 50) {
-  return apiGet<AuditLogResponse>(`/admin/audit-log?limit=${limit}`);
+export function getAuditLog(limit = 50, entityId?: string) {
+  const entityParam = entityId ? `&entity_id=${encodeURIComponent(entityId)}` : "";
+  return apiGet<AuditLogResponse>(`/admin/audit-log?limit=${limit}${entityParam}`);
 }

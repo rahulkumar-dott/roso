@@ -6,6 +6,7 @@ from app.schemas.entities import (
     PublishedContentEditRequest,
     PublishListOut,
     PublishOut,
+    QaSampleReviewRequest,
     RegenerateFieldRequest,
     RevertFieldRequest,
 )
@@ -26,6 +27,28 @@ def publish_entity(entity_id: str, db: Session = Depends(get_db)) -> dict:
 @router.post("/cities/{city_id}/publish", response_model=PublishOut)
 def publish_city_page(city_id: str, db: Session = Depends(get_db)) -> dict:
     result, errors = publisher.publish_city_page(db, city_id)
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+    assert result is not None
+    return result
+
+
+@router.post("/cities/{city_id}/batch/run", response_model=PublishOut)
+def run_ai_batch(city_id: str, db: Session = Depends(get_db)) -> dict:
+    result, errors = publisher.run_ai_batch(db, city_id)
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+    assert result is not None
+    return result
+
+
+@router.post("/cities/{city_id}/batch/review", response_model=PublishOut)
+def review_qa_sample(
+    city_id: str,
+    payload: QaSampleReviewRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    result, errors = publisher.review_qa_sample(db, city_id, payload.decision, notes=payload.notes)
     if errors:
         raise HTTPException(status_code=422, detail=errors)
     assert result is not None

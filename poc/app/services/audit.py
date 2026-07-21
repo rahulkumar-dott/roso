@@ -37,10 +37,11 @@ def log(
     return entry
 
 
-def recent(db: Session, limit: int = 50) -> list[dict[str, Any]]:
-    rows = db.scalars(
-        select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
-    ).all()
+def recent(db: Session, limit: int = 50, entity_id: str | None = None) -> list[dict[str, Any]]:
+    query = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
+    if entity_id:
+        query = query.where(AuditLog.entity_id == entity_id)
+    rows = db.scalars(query).all()
     return [
         {
             "id": row.id,

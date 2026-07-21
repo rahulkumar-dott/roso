@@ -185,5 +185,5 @@ def update_site_config(key: str, payload: Any = Body(...), db: Session = Depends
 
 
 @router.get("/audit-log")
-def audit_log(limit: int = 50, db: Session = Depends(get_db)) -> dict:
-    return {"entries": audit.recent(db, limit=limit)}
+def audit_log(limit: int = 50, entity_id: str | None = None, db: Session = Depends(get_db)) -> dict:
+    return {"entries": audit.recent(db, limit=limit, entity_id=entity_id)}

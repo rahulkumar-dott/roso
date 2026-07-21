@@ -84,6 +84,15 @@ export interface PublishedRecord {
   index_state?: "indexed" | "noindex";
   content_locks?: Record<string, { locked?: boolean; edited_by?: string; locked_at?: string }>;
   content_candidates?: Record<string, { value: unknown; generated_at?: string }>;
+  pending_batch?: {
+    pages: { entity_id: string; page_type: "product"; name: string }[];
+    sampled_entity_ids: string[];
+    status: string;
+    reviewed_by: string | null;
+    reviewed_at: string | null;
+    notes: string | null;
+    created_at: string;
+  } | null;
 }
 
 export interface CityPick {

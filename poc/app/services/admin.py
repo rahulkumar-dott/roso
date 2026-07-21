@@ -727,7 +727,7 @@ def content_similarity(db: Session) -> dict[str, Any]:
 
 DEFAULT_SITE_CONFIG: dict[str, Any] = {
     "header_nav_menu": [
-        {"label": "Destinations", "url": "/destinations"},
+        {"label": "Destinations", "url": "/"},
         {"label": "Experiences", "url": "/experiences"},
         {"label": "Travel Guides", "url": "/guides"},
         {"label": "Experts", "url": "/experts"},
@@ -739,7 +739,7 @@ DEFAULT_SITE_CONFIG: dict[str, Any] = {
             {"label": "Careers", "url": "/careers"},
         ],
         "Explore": [
-            {"label": "Destinations", "url": "/destinations"},
+            {"label": "Destinations", "url": "/"},
             {"label": "Travel Guides", "url": "/guides"},
         ],
         "Support": [

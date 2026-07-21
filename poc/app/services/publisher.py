@@ -1,3 +1,4 @@
+import random
 from datetime import datetime, timezone
 from typing import Any
 
@@ -97,6 +98,7 @@ def _record_out(record: PublishedRecord) -> dict[str, Any]:
         "index_state": _effective_index_state(record),
         "content_locks": record.content_locks or {},
         "content_candidates": record.content_candidates or {},
+        "pending_batch": record.pending_batch,
     }
 
 
@@ -474,6 +476,36 @@ def _country_facts(db: Session, destinations: list[Destination]) -> list[str]:
     return facts
 
 
+def _ranked_top_cities(content: dict[str, Any]) -> list[dict[str, str]]:
+    """Cities ranked by real Model C pick_count (curated-winning product
+    count per city) instead of the plain alphabetical `top_cities` list -
+    used to select which cities' attractions ground the hero image prompt.
+    Falls back to the alphabetical list if the country rollup is suppressed
+    (e.g. no Set-confirmed products anywhere in the country yet).
+    """
+    name_by_id = {c["entity_id"]: c["name"] for c in content.get("top_cities") or []}
+    ranked_ids = [c["city_id"] for c in (content.get("model_c") or {}).get("top_cities") or []]
+    ranked = [{"entity_id": cid, "name": name_by_id[cid]} for cid in ranked_ids if cid in name_by_id]
+    return ranked or (content.get("top_cities") or [])
+
+
+def _top_attraction_names(db: Session, city_entity_ids: list[str], limit: int = 5) -> list[str]:
+    """Real Viator-sourced attraction names for a handful of a country's top
+    cities - used to ground the AI hero image prompt in concrete, real
+    landmarks instead of leaving it to the model's own guess from the country
+    name alone (no doc requirement either way, our own engineering choice).
+    """
+    if not city_entity_ids:
+        return []
+    rows = db.scalars(
+        select(Attraction)
+        .where(Attraction.destination_entity_id.in_(city_entity_ids[:3]))
+        .order_by(Attraction.review_count.desc().nullslast(), Attraction.rating.desc().nullslast())
+        .limit(limit)
+    ).all()
+    return [row.name for row in rows]
+
+
 def _country_faq(country: str, facts_by_label: dict[str, str]) -> list[dict[str, str]]:
     """Exactly 7 fixed-topic FAQs per WBS Country_Page sheet. Uses real data
     where we have it (currency/calling code from Viator); stays generic and
@@ -609,6 +641,7 @@ def _upsert_published_record(
     schema_json: dict[str, Any],
     content: dict[str, Any],
     version: int = 1,
+    force_noindex_reason: str | None = None,
 ) -> PublishedRecord:
     existing = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == entity_id))
     now = _utcnow()
@@ -637,6 +670,23 @@ def _upsert_published_record(
         locked_content = _apply_content_locks(content, existing)
         if entity_type == "country" and not _is_country_promoted(existing):
             record.index_state = "noindex"
+        # Not a documented rule - inferred to stay consistent with the
+        # existing "index_state is derived, never manual" pattern: a country
+        # that has zero active cities (all gated out by
+        # destination_activation_error) shouldn't stay indexed with an empty
+        # city list. Only fires on a transition from indexed -> noindex, so
+        # it's visible as a real demotion, not silent.
+        if entity_type == "country" and force_noindex_reason and record.index_state == "indexed":
+            record.index_state = "noindex"
+            audit.log(
+                db,
+                action="auto_noindex",
+                entity_id=entity_id,
+                field="index_state",
+                before="indexed",
+                after=f"noindex ({force_noindex_reason})",
+                actor="system_auto_publish",
+            )
         record.schema_json = schema_json
         record.content = locked_content
         record.date_modified = now
@@ -773,6 +823,137 @@ def publish_city_page(db: Session, city_id: str) -> tuple[dict[str, Any] | None,
     return _record_out(record), []
 
 
+def run_ai_batch(db: Session, city_id: str, actor: str = "admin_poc") -> tuple[dict[str, Any] | None, list[str]]:
+    """SOW 2.11 + 2.10 ("template-sameness across batch", "batch held/batch
+    regenerates") plus the "Core AI Batch Processing Concept" scope doc: a
+    batch is a GROUP OF RECORD PAGES processed together for one city -
+    Products (and Attractions/Near-pages, once those exist as their own page
+    types) - explicitly NOT the city/destination page itself. That scope doc
+    is explicit: "Pipeline View is NOT... a destination manager" and the two
+    views (batch pipeline vs. destination content editing) "must never
+    overlap in responsibility." The city page already has its own separate
+    governance (lock/regenerate-as-candidate/revert on ContentLockForm) - this
+    batch only covers the city's products. Additive: does not touch
+    publish_city_page's existing instant-publish behavior.
+    """
+    destination = db.scalar(select(Destination).where(Destination.entity_id == city_id))
+    if destination is None:
+        return None, [f"City destination '{city_id}' not found"]
+
+    gate_error = destination_activation_error(db, destination)
+    if gate_error:
+        return None, [gate_error]
+
+    record = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == city_id))
+    if record is None:
+        return None, ["City must be published at least once before running a batch"]
+
+    products = list(
+        db.scalars(select(Product).where(Product.destination_entity_id == city_id)).all()
+    )
+    if not products:
+        return None, [f"'{city_id}' has no products to batch (Pipeline View batches are records - Products/Attractions/Near-pages - not the destination page itself)"]
+
+    batch_pages: list[dict[str, Any]] = [
+        {"entity_id": product.entity_id, "page_type": "product", "name": product.name} for product in products
+    ]
+
+    # Every product in the batch needs a current AI draft to be reviewable
+    # (no-op if a valid draft for the current version already exists).
+    for product in products:
+        drafting.draft_entity(db, product.entity_id)
+
+    sample_size = max(1, round(0.04 * len(batch_pages)))
+    sampled_pages = random.sample(batch_pages, min(sample_size, len(batch_pages)))
+    sampled_entity_ids = sorted(p["entity_id"] for p in sampled_pages)
+
+    record.pending_batch = {
+        "pages": batch_pages,
+        "sampled_entity_ids": sampled_entity_ids,
+        "status": "pending_qa",
+        "reviewed_by": None,
+        "reviewed_at": None,
+        "notes": None,
+        "created_at": _utcnow().isoformat(),
+    }
+    audit.log(
+        db,
+        action="batch_run",
+        entity_id=city_id,
+        field=None,
+        before=None,
+        after={
+            "batch_pages": [p["entity_id"] for p in batch_pages],
+            "sampled": sampled_entity_ids,
+        },
+        actor=actor,
+    )
+    db.commit()
+    return _record_out(record), []
+
+
+def review_qa_sample(
+    db: Session,
+    city_id: str,
+    decision: str,
+    actor: str = "admin_poc",
+    notes: str | None = None,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    if decision not in ("pass", "fail"):
+        return None, ["decision must be 'pass' or 'fail'"]
+
+    record = db.scalar(select(PublishedRecord).where(PublishedRecord.entity_id == city_id))
+    if record is None:
+        return None, [f"Published record '{city_id}' not found"]
+    if not record.pending_batch:
+        return None, [f"No pending batch for '{city_id}'"]
+
+    pending = record.pending_batch
+    pages = pending.get("pages", [])
+
+    if decision == "fail":
+        audit.log(
+            db,
+            action="batch_fail",
+            entity_id=city_id,
+            field=None,
+            before=None,
+            after=notes,
+            actor=actor,
+        )
+        record.pending_batch = None
+        db.commit()
+        return _record_out(record), []
+
+    # decision == "pass": publish every product page in the batch together,
+    # reusing the existing, already-tested publish_entity() directly rather
+    # than replaying a stored content snapshot. Products with no MAJOR diff
+    # pending have nothing new to publish (the Diff Engine's hard rule: only
+    # MAJOR triggers drafting) - skip those rather than failing the whole
+    # batch over a page that hasn't changed.
+    errors: list[str] = []
+    for page in pages:
+        if _latest_validated_content(db, page["entity_id"]) is not None:
+            _, page_errors = publish_entity(db, page["entity_id"])
+            if page_errors:
+                errors.append(f"{page['entity_id']}: {'; '.join(page_errors)}")
+    if errors:
+        return None, errors
+
+    audit.log(
+        db,
+        action="batch_pass",
+        entity_id=city_id,
+        field=None,
+        before=None,
+        after={"published_pages": [p["entity_id"] for p in pages]},
+        actor=actor,
+    )
+    record.pending_batch = None
+    db.commit()
+    return _record_out(record), []
+
+
 def publish_country_page(db: Session, country: str) -> tuple[dict[str, Any] | None, list[str]]:
     destinations = _country_destinations(db, country)
     if not destinations:
@@ -791,7 +972,13 @@ def publish_country_page(db: Session, country: str) -> tuple[dict[str, Any] | No
         # Never regenerated automatically again after that (see
         # _country_content_snapshot's carry-forward comment) - only via the
         # explicit admin "Regenerate hero image" action from here on.
-        asset, error = image_gen.generate_country_hero_image(normalized_country)
+        ranked_cities = _ranked_top_cities(content)
+        top_city_names = [c["name"] for c in ranked_cities]
+        top_city_ids = [c["entity_id"] for c in ranked_cities]
+        top_attraction_names = _top_attraction_names(db, top_city_ids)
+        asset, error = image_gen.generate_country_hero_image(
+            normalized_country, top_cities=top_city_names, top_attractions=top_attraction_names
+        )
         if asset:
             content["hero_image"] = asset
             audit.log(
@@ -838,6 +1025,9 @@ def publish_country_page(db: Session, country: str) -> tuple[dict[str, Any] | No
     )
     if errors:
         return None, errors
+    empty_country_reason = (
+        "zero active cities" if not content.get("top_cities") else None
+    )
     record = _upsert_published_record(
         db,
         entity_id=entity_id,
@@ -846,6 +1036,7 @@ def publish_country_page(db: Session, country: str) -> tuple[dict[str, Any] | No
         schema_json=schema_json,
         content=content,
         version=1,
+        force_noindex_reason=empty_country_reason,
     )
     return _record_out(record), []
 
@@ -1135,7 +1326,13 @@ def regenerate_hero_image(
         return None, ["Hero image generation is only defined for country pages (WBS Country_Page spec)"]
 
     country_name = record.content.get("country_name") or entity_id.removeprefix("country_").replace("-", " ")
-    asset, error = image_gen.generate_country_hero_image(country_name)
+    ranked_cities = _ranked_top_cities(record.content)
+    top_city_names = [c["name"] for c in ranked_cities]
+    top_city_ids = [c["entity_id"] for c in ranked_cities]
+    top_attraction_names = _top_attraction_names(db, top_city_ids)
+    asset, error = image_gen.generate_country_hero_image(
+        country_name, top_cities=top_city_names, top_attractions=top_attraction_names
+    )
     if error:
         return None, [error]
 
